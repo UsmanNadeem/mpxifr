@@ -51,7 +51,9 @@ $cd /path/to/ifrit/Test
 -edit the Makefile in that directory so the paths point to your installation 
  of IFRIT and clang.  Note that you must use the same clang as the one 
  that you linked against the LLVM that you used to build the pass
-$export DYLD_LIBRARY_PATH=/path/to/ifrit/Runtime:$DYLD_LIBRARY_PATH
+
+ export LD_LIBRARY_PATH=/home/linux/Desktop/IFRit/Runtime:$LD_LIBRARY_PATH
+
 $ ./test
 
 You should then see some output like this.
