@@ -140,6 +140,8 @@ static void mpxrt_populate_mpxtable()
 
 void __attribute__ ((constructor (1005))) mpxrt_prepare (void)
 {
+    fprintf(stderr, "****************MPX PREPARE\n");
+    
     //setup buffer
     l1base = mmap (NULL, MPX_L1_SIZE, PROT_READ | PROT_WRITE,
         MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);

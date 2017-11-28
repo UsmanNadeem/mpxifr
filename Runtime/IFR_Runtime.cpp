@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 #include <glib.h>//for GHashTable
-#include "mash.h"
+#include "mash.c"
 
 
 
@@ -332,7 +332,9 @@ void sigint(int sig) {
 /*extern "C" */void __attribute__((constructor)) IFR_Init(void){
   signal(SIGINT, sigint);
   signal(SIGKILL, sigint);
-
+  // mash_dummy();
+  // mpxrt_prepare();
+  fprintf(stderr, "Initializing IFR Runtime\n");
   dbprintf(stderr,"Initializing IFR Runtime\n");
 
 
