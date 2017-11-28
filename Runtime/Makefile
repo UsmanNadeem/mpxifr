@@ -11,14 +11,21 @@ CFLAGS=$(OPT) $(DBG) -fPIC $(GLIB_CFLAGS) -w
 LDFLAGS=$(OPT) $(DBG) -shared -fPIC $(GLIB_LIBS)
 
 
-all: Runtime
+all: libmash.a Runtime
 
-Runtime:
+libmash.a: mash.o
+	@ar cr libmash.a mash.o
+
+mash.o: mash.c
+	@$(CC) -Ofast -fPIC -w -c mash.c -o mash.o
+
+Runtime: libmash.a
 	@$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR.o IFR.c
 	@$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime.o IFR_Runtime.cpp
-	@$(CC) $(LDFLAGS) IFR.o IFR_Runtime.o -o libIFR_Runtime.so
+	@$(CC) $(LDFLAGS) libmash.a IFR.o IFR_Runtime.o -o libIFR_Runtime.so
 
 clean:
-	-rm *.so
-	-rm *.o
+	-rm -f *.so
+	-rm -f *.o
+	-rm -f *.a
 

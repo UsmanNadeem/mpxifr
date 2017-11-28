@@ -11,6 +11,7 @@
 #include <stdbool.h>
 
 #include <glib.h>//for GHashTable
+#include "mash.h"
 
 
 
@@ -209,7 +210,6 @@ void *threadStartFunc(void *data){
   myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
   myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
 #endif
-  // todo MAX_THDS = 64
   pthread_mutex_lock(&availabilityLock);
   for (int i = 0; i < MAX_THDS; ++i)   
   {
@@ -425,15 +425,15 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 
 
 #ifdef IFRIT_HASH_TABLE
-void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs, int write) {
-  GHashTable *myIFRs = write ? myWriteIFRs : myReadIFRs;
+void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
   int v;
   for (v = 0; v < num_new_ifrs; v++) {
     gpointer varg = (gpointer) new_ifrs[v];
     assert(varg != NULL);
-    assert(g_hash_table_lookup(myIFRs, varg) == NULL);
-    g_hash_table_insert(myIFRs, varg, varg);
-    assert(g_hash_table_lookup(myIFRs, varg) == varg);
+    /*todo check this assert*/
+    assert(g_hash_table_lookup(myReadIFRs, varg) == NULL);
+    g_hash_table_insert(myReadIFRs, varg, varg);
+    assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
   }
 }
 #endif
@@ -521,7 +521,7 @@ assert(varg);
   // todo: perhaps take a lock or use a transaction for in-mpx data races
   /* Check if other write IFR active in MPX table*/
   unsigned char buf_fetch[17];
-  // mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
   uint64_t mask = 0xffffffffffffffff;
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
@@ -547,7 +547,7 @@ assert(varg);
   /*Add READ IFR to MPX table*/
   readBound = readBound|currThreadBitPosition;
   *((uint64_t*) buf_fetch+8) = readBound;
-  // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
   
 
   // new_ifr(pthread_t tid pthread_self(), ifrID id, (unsigned long) PC, data pointer unsigned long varg)
@@ -591,7 +591,7 @@ assert(varg);
   // todo: perhaps take a lock or use a transaction for in-mpx data races
   /* Check if other write IFR active in MPX table*/
   unsigned char buf_fetch[17];
-  // mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
   uint64_t mask = 0xffffffffffffffff;
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
@@ -627,10 +627,10 @@ assert(varg);
   /*Add WRITE IFR to MPX table*/
   writeBound = writeBound|currThreadBitPosition;
   *((uint64_t*) buf_fetch) = writeBound;
-  // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
 
-  
+
   /* Add IFR to thread local WRITE IFR hashtable */
   g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)varg);    // same key,val = data ptr
 
@@ -647,6 +647,120 @@ struct EndIFRsInfo {
   unsigned long *downgradeVars;
 };
 
+/* Process an active read IFR for an end IFRs action. Returns true if
+   the IFR should be deleted from local state. */
+gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
+  unsigned long varg = (unsigned long) key;
+  struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *) user_data;
+
+  // Check to see if read or write IFRs for this varg continue through
+  //this release.
+  bool keepMay = false;
+  int q;
+
+  for (q = 0; q < endIFRsInfo->numMay; q++){
+    if (endIFRsInfo->mayArgs[q] == varg) {
+      keepMay = true;
+      break;
+    }
+  }
+
+  if (!keepMay) {
+    for (q = 0; q < endIFRsInfo->numMust; q++){
+      if (endIFRsInfo->mustArgs[q] == varg) {
+  keepMay = true;
+  break;
+      }
+    }
+  }
+
+  if (keepMay) {
+    return FALSE;
+  }
+
+  #ifdef CHECK_FOR_RACES
+  unsigned char buf_fetch[17];
+  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
+
+  uint64_t mask = 0xffffffffffffffff;
+  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  mask = (mask & (~currThreadBitPosition));
+
+
+  /* Get READ IFR active in MPX table*/
+  uint64_t readBound = *((uint64_t*)buf_fetch+8);
+
+  /*Remove READ IFR from MPX table*/
+  readBound = readBound&currThreadBitPosition;
+  *((uint64_t*) buf_fetch+8) = readBound;
+
+  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  #endif
+
+  return TRUE;
+}
+
+/* Process an active write IFR during end_ifrs. Returns true if the
+   write should be deleted from the local state. */
+gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
+  unsigned long varg = (unsigned long) key;
+  struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *) user_data;
+
+  // Check to see if this IFR continues through this release.
+  bool keepMust = false;
+  int q;
+  for (q = 0; q < endIFRsInfo->numMust; q++){
+    if (endIFRsInfo->mustArgs[q] == varg){
+      keepMust = true;
+      break;
+    }
+  }
+
+  if (keepMust) {
+    return FALSE;
+  }
+
+  // If not, check if should be downgraded to a read IFR.
+  bool downgrade = false;
+  for (q = 0; q < endIFRsInfo->numMay; q++) {
+    if (endIFRsInfo->mayArgs[q] == varg && !(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg))) {
+      downgrade = true;
+      break;
+    }
+  }
+
+
+  unsigned char buf_fetch[17];
+  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
+
+  uint64_t mask = 0xffffffffffffffff;
+  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  mask = (mask & (~currThreadBitPosition));
+
+  uint64_t writeBound = *((uint64_t*)buf_fetch);
+  
+  /*delete write from MPX*/
+  writeBound = writeBound&mask;
+  *((uint64_t*) buf_fetch) = writeBound;
+
+
+  if (downgrade) {
+    /* Get READ IFR active in MPX table*/
+    uint64_t readBound = *((uint64_t*)buf_fetch+8);
+    /*Add READ IFR to MPX table*/
+    readBound = readBound|currThreadBitPosition;
+    *((uint64_t*) buf_fetch+8) = readBound;
+
+    endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
+    endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
+    assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
+  }
+
+  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
+
+
+  return TRUE;
+}
 
 // **********************************************************************************************************************************
 void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_list *ap) {
@@ -679,19 +793,24 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
     calloc(numMay, sizeof(unsigned long));
 
 
-      // todo: 
-      // process_end_write endIFRsInfo
-        // search my thread's writeIFRs for mustArgs --> if it exists then dont delete else delete
-        // If not, check if should be downgraded to a read IFR.
-        // if mayArgs in mywriteIFRs AND not in myReadIFRs then downgrade to readIFR and activate readifr and deactivate writeifr
+  /*process_end_write*/
+    /*We have to delete those write IFRs that are not in myWriteIFRs*/
+    /*if mustArg in myWriteIFRs --> dont delete*/
+    /*for all other elements in myWriteIFRs --> 
+        if it is in mayArgs and !READ_IFR_EXISTS(element)
+          downgrade --> activate readIFR+MPX and delete in write IFR+MPX
+    */
+  g_hash_table_foreach_remove(myWriteIFRs, process_end_write, endIFRsInfo);
 
-      // process_end_read endIFRsInfo
-        // for all may and must arg pointers check to see if they are active for my READ IFRs
-        // if they are active then dont delete
-        // else delete
 
-    // todo: since this is inverted we may need a thread local list of IFRs
+  /*Process_end_read*/
+    /*dont delete if mayArg is in myReadIFRs*/
+    /*dont delete if mustArg is in myReadIFRs*/
+    /*else delete in both MPX + local*/
+  g_hash_table_foreach_remove(myReadIFRs, process_end_read, endIFRsInfo);
 
+  /*add downgraded IFRs*/
+  add_ifrs_to_local_state(endIFRsInfo->numDowngrade, endIFRsInfo->downgradeVars);
 
   free(endIFRsInfo->mayArgs);
   free(endIFRsInfo->mustArgs);
