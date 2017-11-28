@@ -534,7 +534,7 @@ assert(varg);
   {
     /* datarace */
     void *curProgPC = __builtin_return_address(0);
-    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    fprintf(stderr,"[IFRit] [RW] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC,  (unsigned long) pthread_self());
     #ifdef RACESTACK
       print_trace();
     #endif
@@ -604,7 +604,7 @@ assert(varg);
   {
     /* datarace */
     void *curProgPC = __builtin_return_address(0);
-    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    fprintf(stderr,"\n[IFRit] [WW] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC,  (unsigned long) pthread_self());
     #ifdef RACESTACK
       print_trace();
     #endif
@@ -618,7 +618,7 @@ assert(varg);
   {
     /* datarace */
     void *curProgPC = __builtin_return_address(0);
-    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    fprintf(stderr,"[IFRit] [WR] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC, pthread_self());
     #ifdef RACESTACK
       print_trace();
     #endif
