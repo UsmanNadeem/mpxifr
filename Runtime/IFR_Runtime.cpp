@@ -7,6 +7,7 @@
 #include <execinfo.h>//for backtrace() and backtrace_symbols()
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 
 #include <glib.h>//for GHashTable
@@ -155,7 +156,7 @@ __thread GHashTable *myReadIFRs;
 #endif
 
 
-
+__thread int threadID;
 __thread IFR *raceCheckIFR;
 
 #define SAMPLING
@@ -380,11 +381,7 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
   IFR *ifr = (IFR *) value;
   if (!pthread_equal(ifr->thread, me->thread)) {
     //raceCount++;
-    fprintf(stderr,"[IFRit] %lu %lu : %p %p\n", me->id, ifr->id,
-	    (void *) me->instAddr, (void *) ifr->instAddr);
-#ifdef RACESTACK
-    print_trace();
-#endif
+
   }
 }
 #endif
@@ -449,24 +446,18 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs, int writ
 
   va_start(ap, num_writes);
 
-  // todo add only non duplicate read ifrs for (gconstpointer) varg for current thread and check races 
-  // see info in read and write funcs 
-
-  // for (i = 0; i < num_reads; i++) {
-  //   unsigned long varg = va_arg(ap, unsigned long);
-  //   assert(varg);
-  //   //todo
-  // }
+  for (i = 0; i < num_reads; i++) {
+    unsigned long varg = va_arg(ap, unsigned long);
+    assert(varg);
+    IFRit_begin_one_read_ifr(id, varg);
+  }
 
 
-  // todo add only non duplicate read ifrs for (gconstpointer) varg for current thread and check races 
-  // see info in read and write funcs 
-
-  // for (i = 0; i < num_writes; i++) {
-  //   unsigned long varg = va_arg(ap, unsigned long);
-  //   assert(varg);
-  //   //todo
-  // }
+  for (i = 0; i < num_writes; i++) {
+    unsigned long varg = va_arg(ap, unsigned long);
+    assert(varg);
+    IFRit_begin_one_write_ifr(id, varg);
+  }
 
 
 #endif
@@ -490,29 +481,53 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs, int writ
     return;
   }
 #endif
+assert(varg);
 
 
-// todo: return if read IFR for current thread exists 
+  // todo: return if read IFR for current thread exists 
+  // if (g_hash_table_lookup(myReadIFRs, (gconstpointer) varg)  READ_IFR_EXISTS(varg)) {
+  //   return;
+  // }
 
-  g_hash_table_insert(myReadIFRs, (gpointer) varg, (gpointer) varg);  /*READ_IFR_INSERT(varg)*/
+  // todo: perhaps take a lock or use a transaction for in-mpx data races
+  /* Check if other write IFR active in MPX table*/
+  unsigned char buf_fetch[17];
+  // mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
-#ifdef CHECK_FOR_RACES
-  void *curProgPC = __builtin_return_address(0);
-  raceCheckIFR->id = id;
-  raceCheckIFR->instAddr = (unsigned long) curProgPC;
+  uint64_t mask = 0xffffffffffffffff;
+  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  mask = (mask & (~currThreadBitPosition));
 
-// todo: check for races with WRITE IFRs
+  uint64_t writeBound = *((uint64_t*)buf_fetch);
+  uint64_t writeActive = writeBound&mask;
 
-  // Check for read/write races.
-  // LOCK_GLOBAL_INFO(varg);
-  /* Start IFR by adding it to the hash table. */
-  // activateReadIFR(varg, curProgPC, id);
-  // assert(varg);
+  if (writeActive != 0)
+  {
+    /* datarace */
+    void *curProgPC = __builtin_return_address(0);
+    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    #ifdef RACESTACK
+      print_trace();
+    #endif
+  }
 
-  // see write for more info
 
-  // UNLOCK_GLOBAL_INFO(varg);
-#endif
+  /* Get READ IFR active in MPX table*/
+  uint64_t readBound = *((uint64_t*)buf_fetch+8);
+
+  /*Add READ IFR to MPX table*/
+  readBound = readBound|currThreadBitPosition;
+  *((uint64_t*) buf_fetch+8) = readBound;
+  // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
+  
+
+  // todo
+  /* Add IFR to thread local READ IFR hashtable */
+  // new_ifr(pthread_t tid pthread_self(), ifrID id, (unsigned long) PC, data pointer unsigned long varg)
+  // IFR *new_ifr(pthread_t tid, unsigned long id, unsigned long iAddr, unsigned long dAddr){
+  // g_hash_table_insert(myReadIFRs, (gpointer) varg, (gpointer) varg);  /*READ_IFR_INSERT(varg)*/
+
+
 }
 // **********************************************************************************************************************************
 
@@ -532,44 +547,62 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs, int writ
       return;
     }
   #endif
+  assert(varg);
 
 
-  // todo: if write ifr for this variable for current threadexists then return
-  // if (g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg)  WRITE_IFR_EXISTS(varg)) {
-  //   return;
-  // }
+  // todo: perhaps take a lock or use a transaction for in-mpx data races
+  /* Check if other write IFR active in MPX table*/
+  unsigned char buf_fetch[17];
+  // mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
-  // todo: else check for races add it
-  // g_hash_table_insert(myWriteIFRs, (gpointer) varg, (gpointer) varg);  /*WRITE_IFR_INSERT(varg)*/
+  uint64_t mask = 0xffffffffffffffff;
+  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  mask = (mask & (~currThreadBitPosition));
 
-#ifdef CHECK_FOR_RACES
-  void *curProgPC = __builtin_return_address(0);
-  raceCheckIFR->id = id;
-  raceCheckIFR->instAddr = (unsigned long) curProgPC;
+  uint64_t writeBound = *((uint64_t*)buf_fetch);
+  uint64_t writeActive = writeBound&mask;
 
-  // Check for read/write and write/write data races.
-  // todo: perhaps take a lock or use a transaction
+  if (writeActive != 0)
+  {
+    /* datarace */
+    void *curProgPC = __builtin_return_address(0);
+    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    #ifdef RACESTACK
+      print_trace();
+    #endif
+  }
+
+  /* Check if other read IFR active in MPX table*/
+  uint64_t readBound = *((uint64_t*)buf_fetch+8);
+  uint64_t readActive = readBound&mask;
+
+  if (readActive != 0)
+  {
+    /* datarace */
+    void *curProgPC = __builtin_return_address(0);
+    fprintf(stderr,"[IFRit] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC, pthread_self());
+    #ifdef RACESTACK
+      print_trace();
+    #endif
+  }
+
+  /*Add WRITE IFR to MPX table*/
+  writeBound = writeBound|currThreadBitPosition;
+  *((uint64_t*) buf_fetch) = writeBound;
+  // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
 
-
-  // LOCK_GLOBAL_INFO(varg);
-
-  // IFR_raceCheck((gpointer) varg , IFR *other write IFR, IFR *me/raceCheckIFR)  race if not equal(ifr->thread, me->thread)
-  // IFR_raceCheck((gpointer) varg , IFR *other READ IFR, IFR *me/raceCheckIFR)  race if not equal(ifr->thread, me->thread)
-  
-  /* Start IFR by adding it to the hash table. */
-
-  // void activateWriteIFR(unsigned long varg, void * curProgPC, unsigned long ifrID id){
-  // assert(varg);
+  // todo
+  /* Add IFR to thread local WRITE IFR hashtable */
   // new_ifr(pthread_t tid pthread_self(), ifrID id, (unsigned long) PC, data pointer unsigned long varg)
   // IFR *new_ifr(pthread_t tid, unsigned long id, unsigned long iAddr, unsigned long dAddr){
 
-  // do something with same thread old ifr if it exists
+  // if (g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg)  WRITE_IFR_EXISTS(varg)) {
+  //   return;
+  // }
+  // g_hash_table_insert(myWriteIFRs, (gpointer) varg, (gpointer) varg);  /*WRITE_IFR_INSERT(varg)*/
 
-}
 
-  // UNLOCK_GLOBAL_INFO(varg);
-#endif
 }
 // **********************************************************************************************************************************
 
@@ -615,8 +648,6 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
     calloc(numMay, sizeof(unsigned long));
 
 
-    // add if def
-
       // todo: 
       // process_end_write endIFRsInfo
         // search my thread's writeIFRs for mustArgs --> if it exists then dont delete else delete
@@ -630,7 +661,6 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
 
     // todo: since this is inverted we may need a thread local list of IFRs
 
-    // end if def
 
   free(endIFRsInfo->mayArgs);
   free(endIFRsInfo->mustArgs);
