@@ -160,20 +160,21 @@ unsigned long long mmiss_reason_key_mismatch;
 
 void __attribute__ ((destructor(1005))) mpxrt_cleanup (void)
 {
+    fprintf(stderr, "****************MPX CLEANUP\n");
     //disable mpx
     disable_mpx();
     //and free buffer
     munmap (l1base, MPX_L1_SIZE);
-    #if 1
+    // #if 1
     //print statistics
-    printf("cache query %lld, hit %lld , %.2f%% Hit Ratio\n",
-        mreq, mhit,
-        100.0*mhit/mreq);
-    printf("Miss reason: \n"
-            "   not exists: %lld\n"
-            "   key mismatch: %lld\n",
-            mmiss_reason_not_exists,
-            mmiss_reason_key_mismatch);
-    #endif
+    // printf("cache query %lld, hit %lld , %.2f%% Hit Ratio\n",
+    //     mreq, mhit,
+    //     100.0*mhit/mreq);
+    // printf("Miss reason: \n"
+    //         "   not exists: %lld\n"
+    //         "   key mismatch: %lld\n",
+    //         mmiss_reason_not_exists,
+    //         mmiss_reason_key_mismatch);
+    // #endif
 }
 
