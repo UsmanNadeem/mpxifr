@@ -159,6 +159,9 @@ __thread GHashTable *myReadIFRs;
 __thread int threadID;
 __thread IFR *raceCheckIFR;
 
+pthread_mutex_t availabilityLock;
+int threadAvailability[64];
+
 #define SAMPLING
 #ifdef SAMPLING
 bool gSampleState;
@@ -206,6 +209,30 @@ void *threadStartFunc(void *data){
   myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
   myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
 #endif
+  int i=0;
+  while(true){
+    if (threadAvailability[i]==0){
+      pthread_mutex_lock(&availabilityLock);
+      if(threadAvailability[i]==0){
+        threadID = i;
+        threadAvailability[i]=1;
+	break;
+      }
+      else{
+        continue;
+      }
+      pthread_mutex_unlock(&availabilityLock);
+    }
+    if (i==64){
+      i=0;
+    }
+    else{
+      i++;
+    }
+  }
+
+
+
 
   pthread_mutex_lock(&allThreadsLock);
   int i = 0;
@@ -266,6 +293,11 @@ void *sample(void *v) {
 
 void thd_dtr(void*d){
   /*Destructor*/
+
+  pthread_mutex_lock(&availabilityLock);
+  threadAvailability[threadID]=0;
+  pthread_mutex_unlock(&availabilityLock);
+  
   pthread_mutex_lock(&allThreadsLock);
   int i = 0;
   for(i = 0; i < MAX_THDS; i++){
@@ -362,6 +394,12 @@ void sigint(int sig) {
   myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
   myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
 #endif
+
+  pthread_mutex_init(&availabilityLock,NULL);
+  for(i=0;i<64;i++){
+    threadAvailability[i]=0;
+  }
+
 
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
@@ -520,10 +558,12 @@ assert(varg);
   *((uint64_t*) buf_fetch+8) = readBound;
   // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
   
-
   // todo
   /* Add IFR to thread local READ IFR hashtable */
-  // new_ifr(pthread_t tid pthread_self(), ifrID id, (unsigned long) PC, data pointer unsigned long varg)
+  
+  g_hash_table_insert(myReadIFRs, (gpointer)varg, new_ifr(pthread_self(),id,(unsigned long)PC,varg));
+
+  // new_ifr( pthread_self(), id, (unsigned long) PC, )
   // IFR *new_ifr(pthread_t tid, unsigned long id, unsigned long iAddr, unsigned long dAddr){
   // g_hash_table_insert(myReadIFRs, (gpointer) varg, (gpointer) varg);  /*READ_IFR_INSERT(varg)*/
 
@@ -591,6 +631,8 @@ assert(varg);
   *((uint64_t*) buf_fetch) = writeBound;
   // mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
+
+  g_hash_table_insert(myWriteIFRs, (gpointer)varg, new_ifr(pthread_self(),id,(unsigned long)PC,varg));
 
   // todo
   /* Add IFR to thread local WRITE IFR hashtable */
