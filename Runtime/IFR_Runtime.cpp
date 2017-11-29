@@ -116,35 +116,8 @@ pthread_key_t dkey;
 
 
 #define CHECK_FOR_RACES
-#ifdef CHECK_FOR_RACES
-  #define VARG_MASK_BITS 5
-  #ifdef VARG_MASK_BITS
-    unsigned long VARG_MASK = (((1 << VARG_MASK_BITS) - 1) << 3);
-    #define NUM_VARG_MASKS (1 << VARG_MASK_BITS)
-    pthread_mutex_t drMutex[NUM_VARG_MASKS];
-    GHashTable *ActiveMustWriteIFR[NUM_VARG_MASKS];
-    GHashTable *ActiveMayWriteIFR[NUM_VARG_MASKS];
-  #else
-    pthread_mutex_t drMutex;
-    GHashTable *ActiveMustWriteIFR;//A hash table mapping from variable -> list of ifrs
-    GHashTable *ActiveMayWriteIFR;//A hash table mapping from variable -> list of ifrs
-  #endif
-#endif
 
 #ifdef CHECK_FOR_RACES
-  #ifdef VARG_MASK_BITS
-    #define TAKE_VARG_MASK(varg) ((varg & VARG_MASK) >> 3)
-    #define LOCK_GLOBAL_INFO(varg) pthread_mutex_lock(&drMutex[TAKE_VARG_MASK(varg)])
-    #define UNLOCK_GLOBAL_INFO(varg) pthread_mutex_unlock(&drMutex[TAKE_VARG_MASK(varg)])
-    #define ACTIVE_MAY_WRITE_TABLE(varg) (ActiveMayWriteIFR[TAKE_VARG_MASK(varg)])
-    #define ACTIVE_MUST_WRITE_TABLE(varg) (ActiveMustWriteIFR[TAKE_VARG_MASK(varg)])
-  #else
-    #define LOCK_GLOBAL_INFO(varg) pthread_mutex_lock(&drMutex)
-    #define UNLOCK_GLOBAL_INFO(varg) pthread_mutex_unlock(&drMutex)
-    #define ACTIVE_MAY_WRITE_TABLE(varg) ActiveMayWriteIFR
-    #define ACTIVE_MUST_WRITE_TABLE(varg) ActiveMustWriteIFR
-  #endif
-#else
   #define LOCK_GLOBAL_INFO(varg) do { } while(0)
   #define UNLOCK_GLOBAL_INFO(varg) do { } while(0)
 #endif
@@ -335,25 +308,20 @@ void sigint(int sig) {
   signal(SIGKILL, sigint);
   // _mash_dummy();
   // mpxrt_prepare();
-  fprintf(stderr, "Initializing IFR Runtime\n");
+  fprintf(stderr, "[IFRit] Initializing IFR Runtime\n");
   dbprintf(stderr,"Initializing IFR Runtime\n");
 
 
 
 #ifdef IFRIT_HASH_TABLE
-  fprintf(stderr, "[IFRit] Hash-table-based implementation in use.\n");
+  fprintf(stderr, "[IFRit] MPX-based implementation in use.\n");
 #endif
 
 #ifdef SINGLE_THREADED_OPT
   fprintf(stderr, "[IFRit] Single-threaded optimization enabled.\n");
 #endif
 
-#ifdef CHECK_FOR_RACES
-#ifdef VARG_MASK_BITS
-  fprintf(stderr, "[IFRit] Partitioning global state into %d partitions.\n",
-	  NUM_VARG_MASKS);
-#endif
-#else
+#ifndef CHECK_FOR_RACES
   fprintf(stderr, "[IFRit] Not checking for races.\n");
 #endif
 
@@ -416,15 +384,6 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
   }
 }
 #endif
-
-
-#ifdef IFRIT_HASH_TABLE
-#define GET_NUM_ACTIVE_IFRS \
-  (g_hash_table_size(myWriteIFRs) + g_hash_table_size(myReadIFRs))
-#endif
-
-#define IFR_TABLES_VALID (myWriteIFRs != NULL && myReadIFRs != NULL)
-
 
 
 #ifdef IFRIT_HASH_TABLE
@@ -813,7 +772,7 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
 
 // **********************************************************************************************************************************
 void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_list *ap) {
-  if (IFR_TABLES_VALID && GET_NUM_ACTIVE_IFRS == 0) {
+  if ((myWriteIFRs != NULL && myReadIFRs != NULL) && (g_hash_table_size(myWriteIFRs) + g_hash_table_size(myReadIFRs)) == 0) {
     return;
   }
 
