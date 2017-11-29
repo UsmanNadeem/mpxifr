@@ -1,8 +1,8 @@
-CC := /usr/local/bin/clang
-
 # might need to change this
-IFRITDIR := /home/linux/Desktop/IFRit
+IFRITDIR := /root/IFRit
 
+
+CC := clang
 IFRITPASS := $(IFRITDIR)/LLVM/IFRit/IFRIT.so
 IFRITRTDIR   := $(IFRITDIR)/Runtime 
 
@@ -24,11 +24,11 @@ all: $(OBJECTS)
 # %.o: %.c
 	@# @$(CC) $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -c -o $@ $^
 %.ll: %.c
-	@$(CC)  $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -S -emit-llvm -o $@ $^
-	@$(CC) -O2 -g -S -emit-llvm -o $@ $@
+	$(CC) $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -S -emit-llvm -o $@ $^
+	 @$(CC) -O2 -g -S -emit-llvm -o $@ $@
 
 %.elf: %.ll
-	@$(CC) $(LDFLAGS) $(GLIB_LIBS) -o $@ $^ 
+	$(CC) $(LDFLAGS) $(GLIB_LIBS) -o $@ $^ 
 
 # ll: $(SOURCES:.c=.ll)
 # %.ll: %.c
@@ -36,4 +36,4 @@ all: $(OBJECTS)
 
 .DUMMY: clean
 clean:
-	@$(RM) *.elf *.bc *.ll *.s *.dot *.pdf *.a *.o *.ll
+	@$(RM) *.elf *.bc *.ll *.s *.dot *.pdf *.a *.o *.ll *.txt

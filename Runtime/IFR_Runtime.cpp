@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 #include <glib.h>//for GHashTable
-#include "mash.c"
+#include "mash.h"
 #include <immintrin.h>
 
 
@@ -333,7 +333,7 @@ void sigint(int sig) {
 /*extern "C" */void __attribute__((constructor)) IFR_Init(void){
   signal(SIGINT, sigint);
   signal(SIGKILL, sigint);
-  // mash_dummy();
+  // _mash_dummy();
   // mpxrt_prepare();
   fprintf(stderr, "Initializing IFR Runtime\n");
   dbprintf(stderr,"Initializing IFR Runtime\n");
@@ -449,6 +449,7 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
 				     unsigned long num_reads,
 				     unsigned long num_writes, ... ){
 
+  // fprintf(stderr,"[IFRit] IFRit_begin_ifrs(ID=%lu, num_reads=%lu, num_writes=%lu) : PC: %p \n", id, num_reads, num_writes,  __builtin_return_address(0));
 
   // CHECK_SAMPLE_STATE;
   #ifdef SAMPLING
@@ -501,7 +502,7 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
   do {   \
   /* Check if other write IFR active in MPX table*/\
   unsigned char buf_fetch[17];  \
-  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
   \
   uint64_t mask = 0xffffffffffffffff; \
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID; \
@@ -514,7 +515,7 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
   { \
     /* datarace */  \
     void *curProgPC = __builtin_return_address(0);  \
-    fprintf(stderr,"[IFRit] [RW] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC,  (unsigned long) pthread_self()); \
+    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu  PC: %p threadID: %lu\n", id, curProgPC,  (unsigned long) pthread_self()); \
     /*#ifdef RACESTACK  \
       print_trace();  \
     #endif  */\
@@ -526,14 +527,15 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
   /*Add READ IFR to MPX table*/ \
   readBound = readBound|currThreadBitPosition;  \
   *((uint64_t*) buf_fetch+8) = readBound; \
-  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
 } while(0)
 
 
 
-/*extern "C" */void IFRit_begin_one_read_ifr(unsigned long id,
+/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
                unsigned long varg) {
 
+  // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
     // CHECK_SAMPLE_STATE;
   #ifdef SAMPLING
     if (!gSampleState) {
@@ -577,7 +579,7 @@ assert(varg);
 do {   \
   /* Check if other write IFR active in MPX table*/ \
   unsigned char buf_fetch[17];  \
-  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
 \
   uint64_t mask = 0xffffffffffffffff; \
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID; \
@@ -590,7 +592,7 @@ do {   \
   { \
     /* datarace */  \
     void *curProgPC = __builtin_return_address(0);  \
-    fprintf(stderr,"\n[IFRit] [WW] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC,  (unsigned long) pthread_self());  \
+    fprintf(stderr,"***[IFRit] [WW] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC,  (unsigned long) pthread_self());  \
     /*#ifdef RACESTACK  \
       print_trace();  \
     #endif*/  \
@@ -604,7 +606,7 @@ do {   \
   { \
     /* datarace */  \
     void *curProgPC = __builtin_return_address(0);  \
-    fprintf(stderr,"[IFRit] [WR] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC, pthread_self()); \
+    fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID: %08x\n", id, curProgPC, pthread_self()); \
     /*#ifdef RACESTACK  \
       print_trace();  \
     #endif*/  \
@@ -613,13 +615,14 @@ do {   \
   /*Add WRITE IFR to MPX table*/  \
   writeBound = writeBound|currThreadBitPosition;  \
   *((uint64_t*) buf_fetch) = writeBound;  \
-  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
 } while(0)
 
 
-/*extern "C" */void IFRit_begin_one_write_ifr(unsigned long id, 
+/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
                 unsigned long varg) {
 
+  // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
     // CHECK_SAMPLE_STATE;
   #ifdef SAMPLING
     if (!gSampleState) {
@@ -671,7 +674,7 @@ struct EndIFRsInfo {
 #define process_end_read_CS(varg) \
 do {   \
   unsigned char buf_fetch[17];  \
-  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
   \
   uint64_t mask = 0xffffffffffffffff;  \
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;  \
@@ -685,7 +688,7 @@ do {   \
   readBound = readBound&currThreadBitPosition;  \
   *((uint64_t*) buf_fetch+8) = readBound;  \
   \
-  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
 } while(0)
 
 
@@ -737,7 +740,7 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
 #define process_end_write_CS(varg, endIFRsInfo) \
 do {   \
   unsigned char buf_fetch[17];  \
-  mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
   \
   uint64_t mask = 0xffffffffffffffff;  \
   uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;  \
@@ -762,7 +765,7 @@ do {   \
     assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);  \
   }  \
   \
-  mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
+  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  \
 } while(0)
 
 /* Process an active write IFR during end_ifrs. Returns true if the

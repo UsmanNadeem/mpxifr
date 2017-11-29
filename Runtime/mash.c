@@ -87,7 +87,7 @@ xrstor_state (struct xsave_struct *fx, uint64_t mask)
 static void
 enable_mpx (void)
 {
-    fprintf(stderr, "****************MPX ENABLE\n");
+    fprintf(stderr, "[MPX] MPX ENABLE\n");
     uint8_t __attribute__ ((__aligned__ (64))) buffer[4096];
     struct xsave_struct *xsave_buf = (struct xsave_struct *)buffer;
 
@@ -125,7 +125,7 @@ disable_mpx (void)
 
 static void mpxrt_populate_mpxtable()
 {
-    fprintf(stderr, "****************MPX POPULATE\n");
+    fprintf(stderr, "[MPX] MPX POPULATE\n");
     void* buf[] = {0,0};
     for (unsigned long i=0;i<MPX_TABLE_CAPACITY;i++)
     {
@@ -137,12 +137,11 @@ static void mpxrt_populate_mpxtable()
          :"r"((void*)buf), "r"(i)
          :);
     }
-    fprintf(stderr,"populated mpx table\n");
 }
 
 void __attribute__ ((constructor (1005))) mpxrt_prepare (void)
 {
-    fprintf(stderr, "****************MPX PREPARE\n");
+    fprintf(stderr, "[MPX] MPX PREPARE\n");
 
     //setup buffer
     l1base = mmap (NULL, MPX_L1_SIZE, PROT_READ | PROT_WRITE,
@@ -160,7 +159,7 @@ unsigned long long mmiss_reason_key_mismatch;
 
 void __attribute__ ((destructor(1005))) mpxrt_cleanup (void)
 {
-    fprintf(stderr, "****************MPX CLEANUP\n");
+    fprintf(stderr, "[MPX] MPX CLEANUP\n");
     //disable mpx
     disable_mpx();
     //and free buffer
