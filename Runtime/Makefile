@@ -7,7 +7,7 @@ GLIB_LIBS=-lpthread  -lgthread-2.0 -lglib-2.0
 
 OPT=-O3
 DBG=-g
-CFLAGS=$(OPT) $(DBG) -fPIC $(GLIB_CFLAGS) -w
+CFLAGS=$(OPT) $(DBG) -fPIC $(GLIB_CFLAGS) -w -mrtm
 LDFLAGS=$(OPT) $(DBG) -shared -fPIC $(GLIB_LIBS)
 
 

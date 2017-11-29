@@ -10,7 +10,7 @@ IFRITRTDIR   := $(IFRITDIR)/Runtime
 GLIB_CFLAGS=-pthread `pkg-config --cflags glib-2.0`
 GLIB_LIBS=-lpthread  -lgthread-2.0 -lglib-2.0
 
-CFLAGS := -O0 -D_GLIBCXX_USE_CXX11_ABI=0 -I/usr/local/include -I/usr/local/include/c++/v1/
+CFLAGS := -O0 -D_GLIBCXX_USE_CXX11_ABI=0 -I/usr/local/include -I/usr/local/include/c++/v1/ -g
 #  -stdlib=libc++ 
 LDFLAGS := -L$(IFRITRTDIR) -lIFR_Runtime
 
@@ -25,7 +25,7 @@ all: $(OBJECTS)
 	@# @$(CC) $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -c -o $@ $^
 %.ll: %.c
 	@$(CC)  $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -S -emit-llvm -o $@ $^
-	@$(CC) -O2 -S -emit-llvm -o $@ $@
+	@$(CC) -O2 -g -S -emit-llvm -o $@ $@
 
 %.elf: %.ll
 	@$(CC) $(LDFLAGS) $(GLIB_LIBS) -o $@ $^ 
