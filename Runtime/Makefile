@@ -17,7 +17,9 @@ Runtime:
 	ar cr libmash.a mash.o
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR.o IFR.c
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime.o IFR_Runtime.cpp
+	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime_orig.o IFR_Runtime_orig.cpp
 	$(CC) $(LDFLAGS) IFR.o IFR_Runtime.o libmash.a  -o libIFR_Runtime.so
+	$(CC) $(LDFLAGS) IFR.o IFR_Runtime_orig.o -o libIFR_Runtime_orig.so
 
 clean:
 	-rm -f *.so
