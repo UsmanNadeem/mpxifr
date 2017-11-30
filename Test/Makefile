@@ -16,19 +16,21 @@ LDFLAGS := -L$(IFRITRTDIR) -lIFR_Runtime
 
 LOADPASS := -Xclang -load -Xclang $(IFRITPASS)
 
-SOURCES := test.c
-OBJECTS := $(SOURCES:.c=.ll) $(SOURCES:.c=.elf)
+SOURCES := test.c test2.c
+OBJECTS := $(SOURCES:.c=.ll) $(SOURCES:.c=.o) $(SOURCES:.c=.mpx)  $(SOURCES:.c=.elf)
 
 all: $(OBJECTS)
 
-# %.o: %.c
-	@# @$(CC) $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -c -o $@ $^
 %.ll: %.c
 	$(CC) $(CFLAGS) $(GLIB_CFLAGS) $(LOADPASS) -S -emit-llvm -o $@ $^
 	 @$(CC) -O2 -g -S -emit-llvm -o $@ $@
-
-%.elf: %.ll
+%.mpx: %.ll
 	$(CC) $(LDFLAGS) $(GLIB_LIBS) -o $@ $^ 
+
+%.o: %.c
+	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -c -o $@ $^
+%.elf: %.o
+	$(CC) $(GLIB_LIBS) -o $@ $^ 
 
 # ll: $(SOURCES:.c=.ll)
 # %.ll: %.c
@@ -36,4 +38,4 @@ all: $(OBJECTS)
 
 .DUMMY: clean
 clean:
-	@$(RM) *.elf *.bc *.ll *.s *.dot *.pdf *.a *.o *.ll *.txt
+	@$(RM) *.elf *.bc *.ll *.s *.dot *.pdf *.a *.o *.ll *.txt  *.mpx
