@@ -14,29 +14,6 @@ void *thread(void *data) {
   for (uint64_t i = 0; i < 1000000; i++) {
     // usleep(1);
     x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
-    // x += 1;
-    // foo(data);
     // printf("%lu\n", x);
   }
 
