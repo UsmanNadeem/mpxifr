@@ -13,7 +13,7 @@ LDFLAGS=$(OPT) $(DBG) -shared -fPIC $(GLIB_LIBS)
 all: Runtime
 
 Runtime:
-	g++ -Ofast -fPIC -w -c mash.c -o mash.o
+	g++ -Ofast -fPIC $(DBG) -w -c mash.c -o mash.o
 	ar cr libmash.a mash.o
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR.o IFR.c
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime.o IFR_Runtime.cpp
