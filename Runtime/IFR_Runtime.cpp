@@ -491,7 +491,7 @@ __attribute__(( always_inline )) int IFRit_begin_one_read_ifr_CS(unsigned long v
 }
 
 
-/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
+/*extern "C" *//*__attribute__(( always_inline ))*/ void IFRit_begin_one_read_ifr(unsigned long id,
                unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -517,16 +517,16 @@ assert(varg);
   }
 
   int race = 0;
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    race = IFRit_begin_one_read_ifr_CS(varg, id);
-    _xend ();
-  } else {
+  // unsigned status = _XABORT_EXPLICIT;
+  // if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+  // {
+    // race = IFRit_begin_one_read_ifr_CS(varg, id);
+    // _xend ();
+  // } else {
     pthread_mutex_lock(&availabilityLock);
     race = IFRit_begin_one_read_ifr_CS(varg, id);
     pthread_mutex_unlock(&availabilityLock);
-  }
+  // }
   
   /* Add IFR to thread local READ IFR hashtable */
     // fprintf(stderr,"NOT Active in local read %p %p ***\n", myReadIFRs, (gpointer)varg);
@@ -582,7 +582,7 @@ __attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long 
     // fprintf(stderr,"%lu ***\n", writeBound); \
     // fprintf(stderr,"stored in mpx***\n", writeBound); \
 
-/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
+/*extern "C" *//*__attribute__(( always_inline )) */void IFRit_begin_one_write_ifr(unsigned long id, 
                 unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -609,16 +609,16 @@ __attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long 
   
   int race = 0;
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    race = IFRit_begin_one_write_ifr_CS(varg, id);
-    _xend ();
-  } else {
+  // unsigned status = _XABORT_EXPLICIT;
+  // if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+  // {
+  //   race = IFRit_begin_one_write_ifr_CS(varg, id);
+  //   _xend ();
+  // } else {
     pthread_mutex_lock(&availabilityLock);
     race = IFRit_begin_one_write_ifr_CS(varg, id);
     pthread_mutex_unlock(&availabilityLock);
-  }
+  // }
 
   if (race == 1) {
     void *curProgPC = __builtin_return_address(0);  
@@ -706,16 +706,16 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
     return FALSE;
   }
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    process_end_read_CS(varg);
-    _xend ();
-  } else {
+  // unsigned status = _XABORT_EXPLICIT;
+  // if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+  // {
+  //   process_end_read_CS(varg);
+  //   _xend ();
+  // } else {
     pthread_mutex_lock(&availabilityLock);
     process_end_read_CS(varg);
     pthread_mutex_unlock(&availabilityLock);
-  }
+  // }
 
   return TRUE;
 }
@@ -782,16 +782,16 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
     }
   }
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    process_end_write_CS(varg, endIFRsInfo, downgrade);
-    _xend ();
-  } else {
+  // unsigned status = _XABORT_EXPLICIT;
+  // if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+  // {
+    // process_end_write_CS(varg, endIFRsInfo, downgrade);
+    // _xend ();
+  // } else {
     pthread_mutex_lock(&availabilityLock);
     process_end_write_CS(varg, endIFRsInfo, downgrade);
     pthread_mutex_unlock(&availabilityLock);
-  }
+  // }
 
   return TRUE;
 }
