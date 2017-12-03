@@ -36,7 +36,7 @@ typedef struct
     int tripCount;
 } pthread_barrier_t;
 
-
+ 
 int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
 {
     if(count == 0)
