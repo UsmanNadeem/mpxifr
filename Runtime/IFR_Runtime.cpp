@@ -395,19 +395,20 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 #endif
 
 
-#ifdef IFRIT_HASH_TABLE
-void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
-  int v;
-  for (v = 0; v < num_new_ifrs; v++) {
-    gpointer varg = (gpointer) new_ifrs[v];
-    assert(varg != NULL);
-    /*todo check this assert*/
-    assert(g_hash_table_lookup(myReadIFRs, varg) == NULL);
-    g_hash_table_insert(myReadIFRs, varg, varg);
-    assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
-  }
-}
-#endif
+// #ifdef IFRIT_HASH_TABLE
+// void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
+//   int v;
+//   for (v = 0; v < num_new_ifrs; v++) {
+//     gpointer varg = (gpointer) new_ifrs[v];
+//     assert(varg != NULL);
+//     /*todo check this assert*/
+//     assert(g_hash_table_lookup(myReadIFRs, varg) == NULL);
+//     assert(g_hash_table_lookup(myWriteIFRs, varg) != NULL);
+//     g_hash_table_insert(myReadIFRs, varg, g_hash_table_lookup(myWriteIFRs, varg));
+//     assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
+//   }
+// }
+// #endif
 
 
 
@@ -466,29 +467,38 @@ void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
 // **********************************************************************************************************************************
 
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) int IFRit_begin_one_read_ifr_CS(unsigned long varg, unsigned long id) {
+__attribute__(( always_inline )) uint64_t IFRit_begin_one_read_ifr_CS(unsigned long varg, uint64_t id) {
 
   unsigned char buf_fetch[17];  
   
-  uint64_t mask = 0xffffffffffffffff; 
-  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID; 
+  uint32_t mask = 0xffffffff; 
+  uint32_t currThreadBitPosition = ((uint32_t)0b1) << threadID; 
   mask = (mask & (~currThreadBitPosition)); 
   
   /* Check if any other write IFR is active in the MPX table*/
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
-  uint64_t writeBound = *((uint64_t*)buf_fetch);   
-  uint64_t writeActive = writeBound&mask; 
+  uint32_t writeBound = *((uint32_t*)buf_fetch);   
+  uint32_t writeActive = writeBound&mask; 
 
   /* Get READ IFR active in MPX table*/ 
-  uint64_t readBound = *((uint64_t*)(buf_fetch+8)); 
+  uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
   /*Add READ IFR to MPX table*/ 
   readBound = readBound|currThreadBitPosition;  
-  *((uint64_t*) (buf_fetch+8)) = readBound; 
+  *((uint32_t*) (buf_fetch+4)) = readBound; 
+
+  /*If no datarace then save current ID*/
+  uint64_t ret = 0;
+  if (writeActive == 0) {
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+  } else {
+    /*else return the ID of other IFR*/
+    ret = *((uint64_t*) (buf_fetch+8));
+  }
+
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  
 
-  if (writeActive==0) return 0;
-  else return 1;
+  return ret;
 }
 
 
@@ -517,15 +527,15 @@ assert(varg);
     return;
   }
 
-  int race = 0;
+  uint64_t race = 0;
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    race = IFRit_begin_one_read_ifr_CS(varg, id);
+    race = IFRit_begin_one_read_ifr_CS(varg, (uint64_t)id);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    race = IFRit_begin_one_read_ifr_CS(varg, id);
+    race = IFRit_begin_one_read_ifr_CS(varg, (uint64_t)id);
     pthread_mutex_unlock(&availabilityLock);
   }
   
@@ -534,7 +544,7 @@ assert(varg);
     // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == NULL);
 
 
-  g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)varg);  // same key,val = data ptr
+  g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)id);  // same key,val = data ptr
     
 
     // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == (gconstpointer) varg);
@@ -543,7 +553,7 @@ assert(varg);
   /* datarace */  
   if (race) {
     void *curProgPC = __builtin_return_address(0);  
-    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg); 
+    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %lu PC: %p threadID(%d): %08x Data: %p \n", id, race, curProgPC, threadID, pthread_self(), (void*)varg); 
     // print_trace();  
   }
 }
@@ -558,17 +568,17 @@ void printBits(uint64_t num)
    printf("\n");
 }
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long varg, unsigned long id) {
+__attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned long varg, uint64_t id) {
 
   unsigned char buf_fetch[17];  
-  uint64_t mask = 0xffffffffffffffff; 
-  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID; 
+  uint32_t mask = 0xffffffff; 
+  uint32_t currThreadBitPosition = ((uint32_t)0b1) << threadID; 
   mask = (mask & (~currThreadBitPosition)); 
 
   /* Check if any other write IFR is active in the MPX table*/
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
-  uint64_t writeBound = *((uint64_t*)buf_fetch);
-  uint64_t writeActive = writeBound&mask; 
+  uint32_t writeBound = *((uint32_t*)buf_fetch);
+  uint32_t writeActive = writeBound&mask; 
 
   // printf("Original Write: ");
   // printBits(writeBound);
@@ -576,26 +586,41 @@ __attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long 
   // printBits(writeActive);
 
   /* Check if any other read IFR is active in the MPX table*/
-  uint64_t readBound = *((uint64_t*)(buf_fetch+8));
+  uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
   // printf("Original Read:  ");
   // printBits(readBound);
 
-  uint64_t readActive = readBound&mask;
+  uint32_t readActive = readBound&mask;
+
+  uint64_t ret = 0;
+  if (writeActive == 0 && readActive == 0) {
+    /*If no datarace then save current ID*/
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+  } else if (writeActive == 0) {
+    /*else return the ID of other read IFR*/
+    ret = *((uint64_t*) (buf_fetch+8));
+  } else if (readActive == 0) {
+    /*else return the ID of other write IFR*/
+    ret = *((uint64_t*) (buf_fetch+8));
+  }
 
   /*Add WRITE IFR to MPX table*/
   writeBound = writeBound|currThreadBitPosition;
   // printf("New Write:      ");
   // printBits(writeBound);
 
-  *((uint64_t*) buf_fetch) = writeBound;
+  *((uint32_t*) buf_fetch) = writeBound;
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch); 
 
-  if (writeActive != 0) 
-    return 1;
-  if (readActive != 0) 
-    return 2;
-  return 0;
+  /*todo:*/
+  // if (writeActive != 0) 
+  //   return writeActive;
+  //   // return 1;
+  // if (readActive != 0) 
+  //   return readActive;
+  //   // return 2;
+  return ret;
 }
 
     // fprintf(stderr,"***[IFRit] [WR] %lu ", writeBound); \
@@ -627,28 +652,33 @@ __attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long 
     return;
   }
   
-  int race = 0;
+  uint64_t race = 0;
 
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    race = IFRit_begin_one_write_ifr_CS(varg, id);
+    race = IFRit_begin_one_write_ifr_CS(varg, (uint64_t)id);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    race = IFRit_begin_one_write_ifr_CS(varg, id);
+    race = IFRit_begin_one_write_ifr_CS(varg, (uint64_t)id);
     pthread_mutex_unlock(&availabilityLock);
   }
 
-  if (race == 1) {
+  // todo
+  // if (race == 1) {
+  //   void *curProgPC = __builtin_return_address(0);  
+  //   fprintf(stderr,"***[IFRit] [WW] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg); 
+  // }
+  // if (race == 2) {
+  //   void *curProgPC = __builtin_return_address(0);  
+  //   fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg);
+  // }
+  if (race)   {
     void *curProgPC = __builtin_return_address(0);  
-    fprintf(stderr,"***[IFRit] [WW] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg); 
+    fprintf(stderr,"***[IFRit] [W] IFR ID: %lu %lu PC: %p threadID(%d): %08x Data: %p \n", id, race, curProgPC, threadID, pthread_self(), (void*)varg);
   }
-  if (race == 2) {
-    void *curProgPC = __builtin_return_address(0);  
-    fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg);
-  }
-  
+
   /*print_trace();*/ 
 
   /* Add IFR to thread local WRITE IFR hashtable */
@@ -656,7 +686,7 @@ __attribute__(( always_inline )) int IFRit_begin_one_write_ifr_CS(unsigned long 
     // fprintf(stderr,"NOT Active in local write%p %p ***\n", myWriteIFRs, (gpointer)varg);
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == NULL);
 
-  g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)varg);    // same key,val = data ptr
+  g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)id);    // same key,val = data ptr
   
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == (gconstpointer) varg);
     // fprintf(stderr,"stored in local write***\n");
@@ -675,21 +705,27 @@ struct EndIFRsInfo {
   unsigned long *downgradeVars;
 };
 
-__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg) {
+__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, uint64_t id) {
   unsigned char buf_fetch[17];  
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
 
-  uint64_t mask = 0xffffffffffffffff; 
-  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  uint32_t mask = 0xffffffff; 
+  uint32_t currThreadBitPosition = ((uint32_t)0b1) << threadID;
   mask = (mask & (~currThreadBitPosition));
 
 
   /* Get READ IFR active in MPX table*/
-  uint64_t readBound = *((uint64_t*)(buf_fetch+8));
+  uint32_t readBound = *((uint32_t*)(buf_fetch+4));
+
+  /*If I was the last stored IFR then set zero*/
+  uint64_t lastIFR = *((uint64_t*) (buf_fetch+8));
+  if (lastIFR == id) {
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)0; 
+  }
 
   /*Remove READ IFR from MPX table*/
   readBound = readBound&currThreadBitPosition;
-  *((uint64_t*) (buf_fetch+8)) = readBound;
+  *((uint32_t*) (buf_fetch+4)) = readBound;
 
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
 }
@@ -716,8 +752,8 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
   if (!keepMay) {
     for (q = 0; q < endIFRsInfo->numMust; q++){
       if (endIFRsInfo->mustArgs[q] == varg) {
-  keepMay = true;
-  break;
+        keepMay = true;
+        break;
       }
     }
   }
@@ -729,42 +765,48 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    process_end_read_CS(varg);
+    process_end_read_CS(varg, (uint64_t)value);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    process_end_read_CS(varg);
+    process_end_read_CS(varg, (uint64_t)value);
     pthread_mutex_unlock(&availabilityLock);
   }
 
   return TRUE;
 }
 
-__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
+__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, uint64_t id, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
 
   unsigned char buf_fetch[17]; 
 
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
   
-  uint64_t mask = 0xffffffffffffffff;
-  uint64_t currThreadBitPosition = ((uint64_t)0b1) << threadID;
+  uint32_t mask = 0xffffffff;
+  uint32_t currThreadBitPosition = ((uint32_t)0b1) << threadID;
   mask = (mask & (~currThreadBitPosition));
 
-  uint64_t writeBound = *((uint64_t*)buf_fetch);
+  uint32_t writeBound = *((uint32_t*)buf_fetch);
   
   /*delete write from MPX*/
   writeBound = writeBound&mask;
-  *((uint64_t*) buf_fetch) = writeBound;
+  *((uint32_t*) buf_fetch) = writeBound;
 
+  /*If I was the last stored IFR then set zero*/
+  uint64_t lastIFR = *((uint64_t*) (buf_fetch+8));
+  if (lastIFR == id) {
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)0; 
+  }
 
   if (downgrade) {
     /* Get READ IFR active in MPX table*/
-    uint64_t readBound = *((uint64_t*)(buf_fetch+8));
+    uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
     /*Add READ IFR to MPX table*/
     readBound = readBound|currThreadBitPosition;
-    *((uint64_t*) (buf_fetch+8)) = readBound;
+    *((uint32_t*) (buf_fetch+4)) = readBound;
 
+    /*todo remove this*/
     endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
     endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
     assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
@@ -805,12 +847,22 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    process_end_write_CS(varg, endIFRsInfo, downgrade);
+    process_end_write_CS(varg, (uint64_t)value, endIFRsInfo, downgrade);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    process_end_write_CS(varg, endIFRsInfo, downgrade);
+    process_end_write_CS(varg, (uint64_t)value, endIFRsInfo, downgrade);
     pthread_mutex_unlock(&availabilityLock);
+  }
+
+
+    /*todo check this assert*/
+  /*Downgrade*/
+  if (downgrade) {
+    assert(g_hash_table_lookup(myReadIFRs, key) == NULL);
+    // assert(g_hash_table_lookup(myWriteIFRs, varg) != NULL);
+    g_hash_table_insert(myReadIFRs, key, value);
+    // assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
   }
 
   return TRUE;
@@ -864,7 +916,7 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
   g_hash_table_foreach_remove(myReadIFRs, process_end_read, endIFRsInfo);
 
   /*add downgraded IFRs*/
-  add_ifrs_to_local_state(endIFRsInfo->numDowngrade, endIFRsInfo->downgradeVars);
+  // add_ifrs_to_local_state(endIFRsInfo->numDowngrade, endIFRsInfo->downgradeVars);
 
   free(endIFRsInfo->mayArgs);
   free(endIFRsInfo->mustArgs);
