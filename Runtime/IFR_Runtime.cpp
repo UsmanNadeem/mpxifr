@@ -600,9 +600,13 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
   } else if (writeActive == 0) {
     /*else return the ID of other read IFR*/
     ret = *((uint64_t*) (buf_fetch+8));
+    /*save current ID*/
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
   } else if (readActive == 0) {
     /*else return the ID of other write IFR*/
     ret = *((uint64_t*) (buf_fetch+8));
+    /*save current ID*/
+    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
   }
 
   /*Add WRITE IFR to MPX table*/
