@@ -3,7 +3,7 @@
 #include <sys/types.h>
 
 
-#define MAX_THDS 64
+#define MAX_THDS 32
 
 
 /* IFRs begin after acquire calls, after unknown function calls, at
