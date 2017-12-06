@@ -1,0 +1,8 @@
+*.so
+*.o
+*.elf
+*.mpx
+*.ll
+*.ifrit
+*.a
+
