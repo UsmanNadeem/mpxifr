@@ -467,7 +467,9 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 // **********************************************************************************************************************************
 
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) uint64_t IFRit_begin_one_read_ifr_CS(unsigned long varg, uint64_t id) {
+__attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS(unsigned long varg, unsigned long _id, uint32_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+
+  uint32_t id = _id & ((uint32_t)0xffffffff);
 
   unsigned char buf_fetch[17];  
   
@@ -487,22 +489,21 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_read_ifr_CS(unsigned l
   readBound = readBound|currThreadBitPosition;  
   *((uint32_t*) (buf_fetch+4)) = readBound; 
 
-  /*If no datarace then save current ID*/
-  uint64_t ret = 0;
+  /*If no datarace then save current ID and PC*/
   if (writeActive == 0) {
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+    *((uint32_t*) (buf_fetch+8)) = id; 
+    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
   } else {
-    /*else return the ID of other IFR*/
-    ret = *((uint64_t*) (buf_fetch+8));
+    /*else return the ID and PC of other IFR*/
+    otherID = *((uint32_t*) (buf_fetch+8));
+    otherPC = *((uint32_t*) (buf_fetch+8+4));
   }
 
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  
-
-  return ret;
 }
 
 
-/*extern "C" *//*__attribute__(( always_inline ))*/ void IFRit_begin_one_read_ifr(unsigned long id,
+/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
                unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -527,15 +528,20 @@ assert(varg);
     return;
   }
 
-  uint64_t race = 0;
+  uint32_t otherPC = 0;
+  uint32_t otherID = 0;
+
+  void *curProgPC = __builtin_return_address(0);  
+  uint32_t curProgPC32 = ((uint32_t)0xffffffff) & (uint64_t)curProgPC;
+
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    race = IFRit_begin_one_read_ifr_CS(varg, (uint64_t)id);
+    IFRit_begin_one_read_ifr_CS(varg, id, curProgPC32, otherID, otherPC);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    race = IFRit_begin_one_read_ifr_CS(varg, (uint64_t)id);
+    IFRit_begin_one_read_ifr_CS(varg, id, curProgPC32, otherID, otherPC);
     pthread_mutex_unlock(&availabilityLock);
   }
   
@@ -544,16 +550,16 @@ assert(varg);
     // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == NULL);
 
 
-  g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)id);  // same key,val = data ptr
+  uint64_t value = (uint64_t)(((uint64_t)id) << 32) & (uint64_t)curProgPC; 
+  g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)value);  // same key,val = data ptr
     
 
     // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == (gconstpointer) varg);
     // fprintf(stderr,"stored in local read ***\n");
 
   /* datarace */  
-  if (race) {
-    void *curProgPC = __builtin_return_address(0);  
-    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %lu PC: %p threadID(%d): %08x Data: %p \n", id, race, curProgPC, threadID, pthread_self(), (void*)varg); 
+  if (otherPC || otherID) {
+    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %lu PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
     // print_trace();  
   }
 }
@@ -568,7 +574,9 @@ void printBits(uint64_t num)
    printf("\n");
 }
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned long varg, uint64_t id) {
+__attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(unsigned long varg, unsigned long _id, uint32_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+
+  uint32_t id = _id & ((uint32_t)0xffffffff);
 
   unsigned char buf_fetch[17];  
   uint32_t mask = 0xffffffff; 
@@ -592,21 +600,33 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
   // printBits(readBound);
 
   uint32_t readActive = readBound&mask;
+  uint32_t ret = 0;
 
-  uint64_t ret = 0;
   if (writeActive == 0 && readActive == 0) {
-    /*If no datarace then save current ID*/
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+
+    /*If no datarace then save current ID and PC*/
+    *((uint32_t*) (buf_fetch+8)) = id; 
+    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
+
   } else if (writeActive == 0) {
-    /*else return the ID of other read IFR*/
-    ret = *((uint64_t*) (buf_fetch+8));
-    /*save current ID*/
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+
+    /*else save the ID and PC of other read IFR*/
+    otherID = *((uint32_t*) (buf_fetch+8));
+    otherPC = *((uint32_t*) (buf_fetch+8+4));
+
+    /*save current ID and PC*/
+    *((uint32_t*) (buf_fetch+8)) = (uint32_t)id; 
+    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
+
   } else if (readActive == 0) {
-    /*else return the ID of other write IFR*/
-    ret = *((uint64_t*) (buf_fetch+8));
-    /*save current ID*/
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)id; 
+
+    /*else return the ID and PC of other write IFR*/
+    otherID = *((uint32_t*) (buf_fetch+8));
+    otherPC = *((uint32_t*) (buf_fetch+8+4));
+
+    /*save current ID and PC*/
+    *((uint32_t*) (buf_fetch+8)) = id; 
+    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
   }
 
   /*Add WRITE IFR to MPX table*/
@@ -624,14 +644,14 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
   // if (readActive != 0) 
   //   return readActive;
   //   // return 2;
-  return ret;
+  // return ret;
 }
 
     // fprintf(stderr,"***[IFRit] [WR] %lu ", writeBound); \
     // fprintf(stderr,"%lu ***\n", writeBound); \
     // fprintf(stderr,"stored in mpx***\n", writeBound); \
 
-/*extern "C" *//*__attribute__(( always_inline )) */void IFRit_begin_one_write_ifr(unsigned long id, 
+/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
                 unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -656,16 +676,21 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
     return;
   }
   
-  uint64_t race = 0;
+  uint32_t race = 0;  // stores other IFR ID
+  uint32_t otherPC = 0;
+  uint32_t otherID = 0;
+  
+  void *curProgPC = __builtin_return_address(0);  
+  uint32_t curProgPC32 = ((uint32_t)0xffffffff) & (uint64_t)curProgPC;
 
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    race = IFRit_begin_one_write_ifr_CS(varg, (uint64_t)id);
+    IFRit_begin_one_write_ifr_CS(varg, id, curProgPC32, otherID, otherPC);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    race = IFRit_begin_one_write_ifr_CS(varg, (uint64_t)id);
+    IFRit_begin_one_write_ifr_CS(varg, id, curProgPC32, otherID, otherPC);
     pthread_mutex_unlock(&availabilityLock);
   }
 
@@ -678,9 +703,8 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
   //   void *curProgPC = __builtin_return_address(0);  
   //   fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg);
   // }
-  if (race)   {
-    void *curProgPC = __builtin_return_address(0);  
-    fprintf(stderr,"***[IFRit] [W] IFR ID: %lu %lu PC: %p threadID(%d): %08x Data: %p \n", id, race, curProgPC, threadID, pthread_self(), (void*)varg);
+  if (otherPC || otherID)   {
+    fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %lu PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
   }
 
   /*print_trace();*/ 
@@ -690,7 +714,8 @@ __attribute__(( always_inline )) uint64_t IFRit_begin_one_write_ifr_CS(unsigned 
     // fprintf(stderr,"NOT Active in local write%p %p ***\n", myWriteIFRs, (gpointer)varg);
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == NULL);
 
-  g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)id);    // same key,val = data ptr
+  uint64_t value = (uint64_t)(((uint64_t)id) << 32) & (uint64_t)curProgPC; 
+  g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)value);    // same key,val = data ptr
   
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == (gconstpointer) varg);
     // fprintf(stderr,"stored in local write***\n");
@@ -709,7 +734,7 @@ struct EndIFRsInfo {
   unsigned long *downgradeVars;
 };
 
-__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, uint64_t id) {
+__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, uint32_t id, uint32_t curProgPC) {
   unsigned char buf_fetch[17];  
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
 
@@ -722,9 +747,10 @@ __attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, ui
   uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
   /*If I was the last stored IFR then set zero*/
-  uint64_t lastIFR = *((uint64_t*) (buf_fetch+8));
-  if (lastIFR == id) {
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)0; 
+  uint32_t lastIFRID = *((uint32_t*) (buf_fetch+8));
+  uint32_t lastIFRPC = *((uint32_t*) (buf_fetch+8+4));
+  if (lastIFRID == id && lastIFRPC == curProgPC) {
+    *((uint64_t*) (buf_fetch+8)) = 0; 
   }
 
   /*Remove READ IFR from MPX table*/
@@ -766,21 +792,23 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
     return FALSE;
   }
 
+  uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
+  uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    process_end_read_CS(varg, (uint64_t)value);
+    process_end_read_CS(varg, id, curProgPC32);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    process_end_read_CS(varg, (uint64_t)value);
+    process_end_read_CS(varg, id, curProgPC32);
     pthread_mutex_unlock(&availabilityLock);
   }
 
   return TRUE;
 }
 
-__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, uint64_t id, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
+__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, uint32_t id, uint32_t curProgPC, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
 
   unsigned char buf_fetch[17]; 
 
@@ -797,9 +825,11 @@ __attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, u
   *((uint32_t*) buf_fetch) = writeBound;
 
   /*If I was the last stored IFR then set zero*/
-  uint64_t lastIFR = *((uint64_t*) (buf_fetch+8));
-  if (lastIFR == id) {
-    *((uint64_t*) (buf_fetch+8)) = (uint64_t)0; 
+  uint32_t lastIFRID = *((uint32_t*) (buf_fetch+8));
+  uint32_t lastIFRPC = *((uint32_t*) (buf_fetch+8+4));
+
+  if (lastIFRID == id && lastIFRPC == curProgPC) {
+    *((uint64_t*) (buf_fetch+8)) = 0; 
   }
 
   if (downgrade) {
@@ -848,14 +878,17 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
     }
   }
 
+  uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
+  uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
+
   unsigned status = _XABORT_EXPLICIT;
   if ((status = _xbegin ()) == _XBEGIN_STARTED) 
   {
-    process_end_write_CS(varg, (uint64_t)value, endIFRsInfo, downgrade);
+    process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
     _xend ();
   } else {
     pthread_mutex_lock(&availabilityLock);
-    process_end_write_CS(varg, (uint64_t)value, endIFRsInfo, downgrade);
+    process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
     pthread_mutex_unlock(&availabilityLock);
   }
 
