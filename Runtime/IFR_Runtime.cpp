@@ -559,7 +559,8 @@ assert(varg);
 
   /* datarace */  
   if (otherPC || otherID) {
-    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
+// fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
+    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %" PRIu32 " PC: %p %p\n", id, otherID, curProgPC, otherPC);
     // print_trace();  
   }
 }
@@ -703,7 +704,8 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(unsigned long
   //   fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg);
   // }
   if (otherPC || otherID)   {
-    fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
+//fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
+    fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %" PRIu32 " PC: %p %p\n", id, otherID, curProgPC, otherPC);
   }
 
   /*print_trace();*/ 
