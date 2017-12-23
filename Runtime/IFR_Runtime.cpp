@@ -491,17 +491,39 @@ __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
   /*If no datarace then save current ID and PC*/
   if (writeActive == 0) {
 	// uint32_t id = (uint32_t)_id;
-    // *((uint32_t*) (buf_fetch+8)) = id; 
-    // *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
+ //    *((uint32_t*) (buf_fetch+8)) = id; 
+ //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
   	uint64_t storeval = _id;
   	storeval = storeval << 32;
   	storeval = storeval | curProgPC;
     *((uint64_t*) (buf_fetch+8)) = storeval; 
 
+ //    printf("ID: ");
+ //    for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
+	// {
+	//   printf("%i ", id & 0x01);
+	//   id = id >> 1;
+	// }
+	// printf("\n");
+	// printf("PC: ");
+	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
+	// {
+	//   printf("%i ", curProgPC & 0x01);
+	//   curProgPC = curProgPC >> 1;
+	// }
+	// printf("\n");
+	// printf("CM: ");
+	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
+	// {
+	//   printf("%i ", storeval & 0x01);
+	//   storeval = storeval >> 1;
+	// }
+	// printf("\n\n");
+
   } else {
     /*else return the ID and PC of other IFR*/
-    otherID = *((uint32_t*) (buf_fetch+8));
-    otherPC = *((uint32_t*) (buf_fetch+8+4));
+    otherPC = *((uint32_t*) (buf_fetch+8));
+    otherID = *((uint32_t*) (buf_fetch+8+4));
   }
 
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  
@@ -608,9 +630,9 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   uint32_t ret = 0;
 
   if (writeActive == 0 && readActive == 0) {
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
 
- //    /*If no datarace then save current ID and PC*/
+    /*If no datarace then save current ID and PC*/
+	// uint32_t id = _id & ((uint32_t)0xffffffff);
  //    *((uint32_t*) (buf_fetch+8)) = id; 
  //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
 
@@ -622,10 +644,11 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   } else if (writeActive == 0) {
 
     /*else save the ID and PC of other read IFR*/
-    otherID = *((uint32_t*) (buf_fetch+8));
-    otherPC = *((uint32_t*) (buf_fetch+8+4));
+    otherPC = *((uint32_t*) (buf_fetch+8));
+    otherID = *((uint32_t*) (buf_fetch+8+4));
 
     /*save current ID and PC*/
+	// uint32_t id = _id & ((uint32_t)0xffffffff);
     // *((uint32_t*) (buf_fetch+8)) = (uint32_t)id; 
     // *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
   	uint64_t storeval = _id;
@@ -636,12 +659,13 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   } else if (readActive == 0) {
 
     /*else return the ID and PC of other write IFR*/
-    otherID = *((uint32_t*) (buf_fetch+8));
-    otherPC = *((uint32_t*) (buf_fetch+8+4));
+    otherPC = *((uint32_t*) (buf_fetch+8));
+    otherID = *((uint32_t*) (buf_fetch+8+4));
 
     /*save current ID and PC*/
-    // *((uint32_t*) (buf_fetch+8)) = id; 
-    // *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
+	// uint32_t id = _id & ((uint32_t)0xffffffff);
+ //    *((uint32_t*) (buf_fetch+8)) = id; 
+ //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
   	uint64_t storeval = _id;
   	storeval = storeval << 32;
   	storeval = storeval | curProgPC;
