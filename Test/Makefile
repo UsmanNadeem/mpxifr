@@ -10,14 +10,14 @@ IFRITRTDIR   := $(IFRITDIR)/Runtime
 GLIB_CFLAGS=-pthread `pkg-config --cflags glib-2.0`
 GLIB_LIBS=-lpthread  -lgthread-2.0 -lglib-2.0
 
-CFLAGS := -O0 -D_GLIBCXX_USE_CXX11_ABI=0 -I/usr/local/include -I/usr/local/include/c++/v1/ -g
+CFLAGS := -O3 -D_GLIBCXX_USE_CXX11_ABI=0 -I/usr/local/include -I/usr/local/include/c++/v1/ -g
 #  -stdlib=libc++ 
 LDFLAGS_MPX := -L$(IFRITRTDIR) -lIFR_Runtime
 LDFLAGS_IFRIT := -L$(IFRITRTDIR) -lIFR_Runtime_orig
 
 LOADPASS := -Xclang -load -Xclang $(IFRITPASS)
 
-SOURCES := test.c test2.c test3.c
+SOURCES := test.c test2.c test3.c test4.c
 OBJECTS := $(SOURCES:.c=.ll) $(SOURCES:.c=.o) $(SOURCES:.c=.mpx)  $(SOURCES:.c=.elf) $(SOURCES:.c=.ifrit)
 
 all:  .DUMMY $(OBJECTS)
