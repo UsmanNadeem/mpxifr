@@ -141,7 +141,7 @@ pthread_t threadAvailability[MAX_THDS];
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
-  #define VARG_MASK_BITS 5
+  // #define VARG_MASK_BITS 5
   // #define VARG_MASK_BITS 9
 #endif
 
@@ -169,8 +169,8 @@ bool gSampleState;
 pthread_t samplingAlarmThread;
 #endif
 
-pthread_mutex_t allThreadsLock;
-pthread_t allThreads[MAX_THDS];
+// pthread_mutex_t allThreadsLock;
+// pthread_t allThreads[MAX_THDS];
 
 #define SINGLE_THREADED_OPT
 #ifdef SINGLE_THREADED_OPT
@@ -219,23 +219,23 @@ void *threadStartFunc(void *data){
       break;
     }
   }
+  #ifdef SINGLE_THREADED_OPT
+    num_threads++;
+  #endif
   pthread_mutex_unlock(&availabilityLock);
 
 
-  pthread_mutex_lock(&allThreadsLock);
-  int i = 0;
-  for(i = 0; i < MAX_THDS; i++){
-    if( allThreads[i] == (pthread_t)0 ){
-      allThreads[i] = pthread_self();
-      break;
-    }
-  }
+  // pthread_mutex_lock(&allThreadsLock);
+  // int i = 0;
+  // for(i = 0; i < MAX_THDS; i++){
+  //   if( allThreads[i] == (pthread_t)0 ){
+  //     allThreads[i] = pthread_self();
+  //     break;
+  //   }
+  // }
 
-#ifdef SINGLE_THREADED_OPT
-  num_threads++;
-#endif
 
-  pthread_mutex_unlock(&allThreadsLock);
+  // pthread_mutex_unlock(&allThreadsLock);
 
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
@@ -284,22 +284,20 @@ void thd_dtr(void*d){
 
   pthread_mutex_lock(&availabilityLock);
   threadAvailability[threadID] = (pthread_t)0;
+  #ifdef SINGLE_THREADED_OPT
+    num_threads--;
+  #endif
   pthread_mutex_unlock(&availabilityLock);
   
-  pthread_mutex_lock(&allThreadsLock);
-  int i = 0;
-  for(i = 0; i < MAX_THDS; i++){
-    if( allThreads[i] != (pthread_t)0 && pthread_equal(allThreads[i],pthread_self()) ){
-      allThreads[i] = 0;
-      break;
-    }
-  }
-
-#ifdef SINGLE_THREADED_OPT
-  num_threads--;
-#endif
-
-  pthread_mutex_unlock(&allThreadsLock);
+  // pthread_mutex_lock(&allThreadsLock);
+  // int i = 0;
+  // for(i = 0; i < MAX_THDS; i++){
+  //   if( allThreads[i] != (pthread_t)0 && pthread_equal(allThreads[i],pthread_self()) ){
+  //     allThreads[i] = 0;
+  //     break;
+  //   }
+  // }
+  // pthread_mutex_unlock(&allThreadsLock);
 
   IFRit_end_ifrs_internal(0, 0, NULL);
 
@@ -373,13 +371,13 @@ void sigseg(int sig) {
 
   g_thread_init(NULL);
   
-  pthread_mutex_init(&allThreadsLock, NULL);
-  int i ;
-  for(i = 0; i < MAX_THDS; i++){
-    allThreads[i] = (pthread_t)0;
-  }
+  // pthread_mutex_init(&allThreadsLock, NULL);
+  // int i ;
+  // for(i = 0; i < MAX_THDS; i++){
+  //   allThreads[i] = (pthread_t)0;
+  // }
 
-  allThreads[0] = pthread_self();
+  // allThreads[0] = pthread_self();
 
 #ifdef SINGLE_THREADED_OPT
   num_threads = 1;
@@ -402,7 +400,7 @@ void sigseg(int sig) {
   pthread_mutex_init(&availabilityLock,NULL);
 
 
-  for (i = 0; i < MAX_THDS; ++i) {
+  for (int i = 0; i < MAX_THDS; ++i) {
     threadAvailability[i] = (pthread_t)0;
   }
   threadAvailability[0] = pthread_self();
@@ -411,7 +409,7 @@ void sigseg(int sig) {
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
 #ifdef VARG_MASK_BITS
-  for (i = 0; i < NUM_VARG_MASKS; i++) {
+  for (int i = 0; i < NUM_VARG_MASKS; i++) {
     pthread_mutex_init(&drMutex[i], NULL);
   }
 #endif
