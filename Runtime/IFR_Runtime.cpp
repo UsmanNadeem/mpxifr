@@ -130,12 +130,38 @@ __thread GHashTable *myWriteIFRs;
 __thread GHashTable *myReadIFRs;
 #endif
 
-
 __thread int threadID;
 __thread IFR *raceCheckIFR;
 
+// todo change name of the lock
 pthread_mutex_t availabilityLock;
 pthread_t threadAvailability[MAX_THDS];
+
+#define IFRIT_HTM
+#ifndef IFRIT_HTM
+  // 32 locks, 512 locks
+  // only one global lock if not defined
+  #define VARG_MASK_BITS 5
+  // #define VARG_MASK_BITS 9
+#endif
+
+#ifdef VARG_MASK_BITS
+  unsigned long VARG_MASK = (((1 << VARG_MASK_BITS) - 1) << 3);
+  #define NUM_VARG_MASKS (1 << VARG_MASK_BITS)
+  pthread_mutex_t drMutex[NUM_VARG_MASKS];
+// #else use availabilityLock
+  // pthread_mutex_t drMutex;
+#endif
+
+#ifdef VARG_MASK_BITS
+  #define TAKE_VARG_MASK(varg) ((varg & VARG_MASK) >> 3)
+  #define LOCK_GLOBAL_INFO(varg) pthread_mutex_lock(&drMutex[TAKE_VARG_MASK(varg)])
+  #define UNLOCK_GLOBAL_INFO(varg) pthread_mutex_unlock(&drMutex[TAKE_VARG_MASK(varg)])
+#else
+  #define LOCK_GLOBAL_INFO(varg) pthread_mutex_lock(&availabilityLock)
+  #define UNLOCK_GLOBAL_INFO(varg) pthread_mutex_unlock(&availabilityLock)
+#endif
+
 
 #define SAMPLING
 #ifdef SAMPLING
@@ -334,6 +360,17 @@ void sigseg(int sig) {
   fprintf(stderr, "[IFRit] Not checking for races.\n");
 #endif
 
+#ifdef VARG_MASK_BITS
+  fprintf(stderr, "[IFRit] Partitioning global state into %d partitions.\n",
+    NUM_VARG_MASKS);
+  
+#else
+  #ifndef IFRIT_HTM
+    fprintf(stderr, "[IFRit] Partitioning global state into 1 partition.\n");
+  #endif
+
+#endif
+
   g_thread_init(NULL);
   
   pthread_mutex_init(&allThreadsLock, NULL);
@@ -372,6 +409,12 @@ void sigseg(int sig) {
   threadID = 0;
 
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
+
+#ifdef VARG_MASK_BITS
+  for (i = 0; i < NUM_VARG_MASKS; i++) {
+    pthread_mutex_init(&drMutex[i], NULL);
+  }
+#endif
 
 }
 
@@ -560,16 +603,22 @@ assert(varg);
 
   void *curProgPC = __builtin_return_address(0);  
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
-    _xend ();
-  } else {
-    pthread_mutex_lock(&availabilityLock);
-    IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
-    pthread_mutex_unlock(&availabilityLock);
-  }
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
   
   /* Add IFR to thread local READ IFR hashtable */
     // fprintf(stderr,"NOT Active in local read %p %p ***\n", myReadIFRs, (gpointer)varg);
@@ -724,16 +773,24 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   
   void *curProgPC = __builtin_return_address(0);  
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
-    _xend ();
-  } else {
-    pthread_mutex_lock(&availabilityLock);
-    IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
-    pthread_mutex_unlock(&availabilityLock);
-  }
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
+  
 
   // todo
   // if (race == 1) {
@@ -837,16 +894,24 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
 
   uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
   uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    process_end_read_CS(varg, id, curProgPC32);
-    _xend ();
-  } else {
-    pthread_mutex_lock(&availabilityLock);
-    process_end_read_CS(varg, id, curProgPC32);
-    pthread_mutex_unlock(&availabilityLock);
-  }
+
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      process_end_read_CS(varg, id, curProgPC32);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      process_end_read_CS(varg, id, curProgPC32);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      process_end_read_CS(varg, id, curProgPC32);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
 
   return TRUE;
 }
@@ -924,16 +989,23 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
   uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
   uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
 
-  unsigned status = _XABORT_EXPLICIT;
-  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
-  {
-    process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
-    _xend ();
-  } else {
-    pthread_mutex_lock(&availabilityLock);
-    process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
-    pthread_mutex_unlock(&availabilityLock);
-  }
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
 
 
     /*todo check this assert*/

@@ -10,6 +10,7 @@
 #include <stdbool.h>
 
 #include <glib.h>//for GHashTable
+#include <immintrin.h>
 
 
 
@@ -149,24 +150,35 @@ typedef tbb::concurrent_hash_map<unsigned long, IFRMap *> IFRMapMap;
 IFRMapMap *ActiveMayWriteIFR;
 IFRMap *ActiveMustWriteIFR;
 #else
-#define VARG_MASK_BITS 5
-#ifdef VARG_MASK_BITS
-unsigned long VARG_MASK = (((1 << VARG_MASK_BITS) - 1) << 3);
-#define NUM_VARG_MASKS (1 << VARG_MASK_BITS)
-pthread_mutex_t drMutex[NUM_VARG_MASKS];
-GHashTable *ActiveMustWriteIFR[NUM_VARG_MASKS];
-GHashTable *ActiveMayWriteIFR[NUM_VARG_MASKS];
-//#define VARG_MASK_COUNT
-#ifdef VARG_MASK_COUNT
-unsigned long partition_counters[NUM_VARG_MASKS];
+// #define IFRIT_HTM
+  #ifdef IFRIT_HTM
+    // only one global lock dont define 
+    // #define VARG_MASK_BITS 0
+  #else
+    // 32 locks, 512 locks
+    #define VARG_MASK_BITS 5
+    // #define VARG_MASK_BITS 9
+  #endif
+
+
+  #ifdef VARG_MASK_BITS
+    unsigned long VARG_MASK = (((1 << VARG_MASK_BITS) - 1) << 3);
+    #define NUM_VARG_MASKS (1 << VARG_MASK_BITS)
+    pthread_mutex_t drMutex[NUM_VARG_MASKS];
+    GHashTable *ActiveMustWriteIFR[NUM_VARG_MASKS];
+    GHashTable *ActiveMayWriteIFR[NUM_VARG_MASKS];
+    //#define VARG_MASK_COUNT
+    #ifdef VARG_MASK_COUNT
+      unsigned long partition_counters[NUM_VARG_MASKS];
+    #endif
+  #else
+    pthread_mutex_t drMutex;
+    GHashTable *ActiveMustWriteIFR;//A hash table mapping from variable -> list of ifrs
+    GHashTable *ActiveMayWriteIFR;//A hash table mapping from variable -> list of ifrs
+  #endif
 #endif
-#else
-pthread_mutex_t drMutex;
-GHashTable *ActiveMustWriteIFR;//A hash table mapping from variable -> list of ifrs
-GHashTable *ActiveMayWriteIFR;//A hash table mapping from variable -> list of ifrs
 #endif
-#endif
-#endif
+
 
 #ifdef CHECK_FOR_RACES
 #ifdef USE_TBB
@@ -1112,6 +1124,32 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
 
     activateReadIFR(varg, curProgPC, id);
 #else
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      /*Looking in a map from variable -> IFR record */
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg), (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+
+      activateReadIFR(varg, curProgPC, id);
+      _xend ();
+    } else {
+      LOCK_GLOBAL_INFO(varg);
+
+      /*Looking in a map from variable -> IFR record */
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg), (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+
+      activateReadIFR(varg, curProgPC, id);
+
+      UNLOCK_GLOBAL_INFO(varg);
+    }
+  #else
     LOCK_GLOBAL_INFO(varg);
 
     /*Looking in a map from variable -> IFR record */
@@ -1123,6 +1161,7 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
     activateReadIFR(varg, curProgPC, id);
 
     UNLOCK_GLOBAL_INFO(varg);
+  #endif
 #endif
   }
 
@@ -1156,6 +1195,47 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
       delete(i);
     }
 #else
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      /*Looking in a map from variable -> IFR record */
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg), (gconstpointer)varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+
+      /*Looking in a map from variable -> (map from thread -> IFR record)*/
+      GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg), (gconstpointer) varg);
+      if (ifrs) {
+        /*Foreaching in a map from thread -> IFR record*/
+        g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
+      }
+
+      activateWriteIFR(varg, curProgPC, id);
+
+      _xend ();
+    } else {
+      LOCK_GLOBAL_INFO(varg);
+
+      /*Looking in a map from variable -> IFR record */
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg), (gconstpointer)varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+
+      /*Looking in a map from variable -> (map from thread -> IFR record)*/
+      GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg), (gconstpointer) varg);
+      if (ifrs) {
+        /*Foreaching in a map from thread -> IFR record*/
+        g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
+      }
+
+      activateWriteIFR(varg, curProgPC, id);
+
+      UNLOCK_GLOBAL_INFO(varg);
+    }
+  #else
     LOCK_GLOBAL_INFO(varg);
 
     /*Looking in a map from variable -> IFR record */
@@ -1174,6 +1254,8 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
     activateWriteIFR(varg, curProgPC, id);
 
     UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
 #endif
   }
 #endif
@@ -1248,17 +1330,46 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
   /* Start IFR by adding it to the hash table. */
   activateReadIFR(varg, curProgPC, id);
 #else
-  // Check for read/write races.
-  LOCK_GLOBAL_INFO(varg);
-  IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
-				       (gconstpointer) varg);
-  if (i) {
-    IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
-  }
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      // Check for read/write races.
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                   (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
 
-  /* Start IFR by adding it to the hash table. */
-  activateReadIFR(varg, curProgPC, id);
-  UNLOCK_GLOBAL_INFO(varg);
+      /* Start IFR by adding it to the hash table. */
+      activateReadIFR(varg, curProgPC, id);
+      _xend ();
+    } else {
+      // Check for read/write races.
+      LOCK_GLOBAL_INFO(varg);
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                   (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+
+      /* Start IFR by adding it to the hash table. */
+      activateReadIFR(varg, curProgPC, id);
+      UNLOCK_GLOBAL_INFO(varg);
+    }
+  #else
+    // Check for read/write races.
+    LOCK_GLOBAL_INFO(varg);
+    IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                 (gconstpointer) varg);
+    if (i) {
+      IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+    }
+
+    /* Start IFR by adding it to the hash table. */
+    activateReadIFR(varg, curProgPC, id);
+    UNLOCK_GLOBAL_INFO(varg);
+  #endif
 #endif
 #endif
 }
@@ -1345,22 +1456,62 @@ inline bool checkReadShared(unsigned long varg, bool is_write) {
     delete(i);
   }
 #else
-  // Check for read/write and write/write data races.
-  LOCK_GLOBAL_INFO(varg);
-  IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
-				       (gconstpointer) varg);
-  if (i) {
-    IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
-  }
-  GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg),
-							(gconstpointer) varg);
-  if (ifrs) {
-    g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
-  }
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      // Check for read/write and write/write data races.
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                   (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+      GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg),
+                  (gconstpointer) varg);
+      if (ifrs) {
+        g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
+      }
 
-  /* Start IFR by adding it to the hash table. */
-  activateWriteIFR(varg, curProgPC, id);
-  UNLOCK_GLOBAL_INFO(varg);
+      /* Start IFR by adding it to the hash table. */
+      activateWriteIFR(varg, curProgPC, id);
+      _xend ();
+    } else {
+      // Check for read/write and write/write data races.
+      LOCK_GLOBAL_INFO(varg);
+      IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                   (gconstpointer) varg);
+      if (i) {
+        IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+      }
+      GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg),
+                  (gconstpointer) varg);
+      if (ifrs) {
+        g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
+      }
+
+      /* Start IFR by adding it to the hash table. */
+      activateWriteIFR(varg, curProgPC, id);
+      UNLOCK_GLOBAL_INFO(varg);
+    }
+  #else
+    // Check for read/write and write/write data races.
+    LOCK_GLOBAL_INFO(varg);
+    IFR *i = (IFR *) g_hash_table_lookup(ACTIVE_MUST_WRITE_TABLE(varg),
+                 (gconstpointer) varg);
+    if (i) {
+      IFR_raceCheck((gpointer) varg, i, raceCheckIFR);
+    }
+    GHashTable *ifrs = (GHashTable *) g_hash_table_lookup(ACTIVE_MAY_WRITE_TABLE(varg),
+                (gconstpointer) varg);
+    if (ifrs) {
+      g_hash_table_foreach(ifrs, IFR_raceCheck, raceCheckIFR);
+    }
+
+    /* Start IFR by adding it to the hash table. */
+    activateWriteIFR(varg, curProgPC, id);
+    UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
 #endif
 #endif
 }
@@ -1405,25 +1556,68 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
     }
   }
 
-#ifdef CHECK_FOR_RACES
-  LOCK_GLOBAL_INFO(varg);
-#endif
+#ifdef IFRIT_HTM
+  unsigned status = _XABORT_EXPLICIT;
+  if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+  {
+    if (downgrade) {
+      #ifdef CHECK_FOR_RACES
+      IFR *ifr = getWriteIFR(varg);
+      activateReadIFR(varg, (void *) ifr->instAddr, ifr->id);
+      #endif
+      endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
+      endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
+      assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
+    }
 
-  if (downgrade) {
-#ifdef CHECK_FOR_RACES
-    IFR *ifr = getWriteIFR(varg);
-    activateReadIFR(varg, (void *) ifr->instAddr, ifr->id);
-#endif
-    endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
-    endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
-    assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
+    #ifdef CHECK_FOR_RACES
+      // Deactivate the write IFR
+      deactivateWriteIFR(varg);
+    #endif
+    _xend ();
+  } else {
+    #ifdef CHECK_FOR_RACES
+      LOCK_GLOBAL_INFO(varg);
+    #endif
+
+      if (downgrade) {
+    #ifdef CHECK_FOR_RACES
+        IFR *ifr = getWriteIFR(varg);
+        activateReadIFR(varg, (void *) ifr->instAddr, ifr->id);
+    #endif
+        endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
+        endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
+        assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
+      }
+
+    #ifdef CHECK_FOR_RACES
+      // Deactivate the write IFR
+      deactivateWriteIFR(varg);
+      UNLOCK_GLOBAL_INFO(varg);
+    #endif
   }
+#else
+  #ifdef CHECK_FOR_RACES
+    LOCK_GLOBAL_INFO(varg);
+  #endif
 
-#ifdef CHECK_FOR_RACES
-  // Deactivate the write IFR
-  deactivateWriteIFR(varg);
-  UNLOCK_GLOBAL_INFO(varg);
+    if (downgrade) {
+  #ifdef CHECK_FOR_RACES
+      IFR *ifr = getWriteIFR(varg);
+      activateReadIFR(varg, (void *) ifr->instAddr, ifr->id);
+  #endif
+      endIFRsInfo->downgradeVars[endIFRsInfo->numDowngrade] = varg;
+      endIFRsInfo->numDowngrade = endIFRsInfo->numDowngrade + 1;
+      assert(endIFRsInfo->numDowngrade <= endIFRsInfo->numMay);
+    }
+
+  #ifdef CHECK_FOR_RACES
+    // Deactivate the write IFR
+    deactivateWriteIFR(varg);
+    UNLOCK_GLOBAL_INFO(varg);
+  #endif
 #endif
+    
 
   return TRUE;
 }
@@ -1460,9 +1654,23 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
   }
 
 #ifdef CHECK_FOR_RACES
-  LOCK_GLOBAL_INFO(varg);
-  deactivateReadIFR(varg);
-  UNLOCK_GLOBAL_INFO(varg);
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      deactivateReadIFR(varg);
+      _xend ();
+    } else {
+      LOCK_GLOBAL_INFO(varg);
+      deactivateReadIFR(varg);
+      UNLOCK_GLOBAL_INFO(varg);
+    }
+  #else
+    LOCK_GLOBAL_INFO(varg);
+    deactivateReadIFR(varg);
+    UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
 #endif
 
   return TRUE;
