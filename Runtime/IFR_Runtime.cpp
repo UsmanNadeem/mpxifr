@@ -282,6 +282,8 @@ void *sample(void *v) {
 void thd_dtr(void*d){
   /*Destructor*/
 
+  IFRit_end_ifrs_internal(0, 0, NULL);
+
   pthread_mutex_lock(&availabilityLock);
   threadAvailability[threadID] = (pthread_t)0;
   #ifdef SINGLE_THREADED_OPT
@@ -299,7 +301,6 @@ void thd_dtr(void*d){
   // }
   // pthread_mutex_unlock(&allThreadsLock);
 
-  IFRit_end_ifrs_internal(0, 0, NULL);
 
   //fprintf(stderr, "[IFRit] total: %lu redundant: %lu stack: %lu\n", totalStarts, alreadyActive, stackAddress);
   //fprintf(stderr, "[IFRit] Rough insertion weight (thread %p): %lu\n", pthread_self(), insertionCount);
@@ -623,7 +624,7 @@ assert(varg);
     // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == NULL);
 
 
-  uint64_t value = (uint64_t)(((uint64_t)id) << 32) & (uint64_t)curProgPC; 
+  uint64_t value = (uint64_t)(((uint64_t)id) << 32) | (uint64_t)curProgPC; 
   g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)value);  // same key,val = data ptr
     
 
@@ -811,7 +812,7 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     // fprintf(stderr,"NOT Active in local write%p %p ***\n", myWriteIFRs, (gpointer)varg);
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == NULL);
 
-  uint64_t value = (uint64_t)(((uint64_t)id) << 32) & (uint64_t)curProgPC; 
+  uint64_t value = (uint64_t)(((uint64_t)id) << 32) | (uint64_t)curProgPC; 
   g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)value);    // same key,val = data ptr
   
     // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == (gconstpointer) varg);
@@ -1023,7 +1024,6 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
   if ((myWriteIFRs != NULL && myReadIFRs != NULL) && (g_hash_table_size(myWriteIFRs) + g_hash_table_size(myReadIFRs)) == 0) {
     return;
   }
-
 
   struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *)
     malloc(sizeof (struct EndIFRsInfo));

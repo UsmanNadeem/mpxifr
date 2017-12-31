@@ -6,7 +6,7 @@ GLIB_LIBS=-lpthread  -lgthread-2.0 -lglib-2.0
 
 OPT=-O3
 DBG=-g
-CFLAGS=$(OPT) $(DBG) -fPIC $(GLIB_CFLAGS) -w -mrtm
+CFLAGS=$(OPT) $(DBG) -fPIC $(GLIB_CFLAGS) -w -mrtm  -std=c++11
 LDFLAGS=$(OPT) $(DBG) -shared -fPIC $(GLIB_LIBS)
 
 
@@ -18,7 +18,9 @@ Runtime:
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR.o IFR.c
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime.o IFR_Runtime.cpp
 	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime_orig.o IFR_Runtime_orig.cpp
+	$(CC) $(CFLAGS) -c $(CFLAGS) -o IFR_Runtime_allraces.o IFR_Runtime_allraces.cpp
 	$(CC) $(LDFLAGS) IFR.o IFR_Runtime.o libmash.a  -o libIFR_Runtime.so
+	$(CC) $(LDFLAGS) IFR.o IFR_Runtime_allraces.o libmash.a  -o libIFR_Runtime_allraces.so
 	$(CC) $(LDFLAGS) IFR.o IFR_Runtime_orig.o -o libIFR_Runtime_orig.so
 
 clean:
