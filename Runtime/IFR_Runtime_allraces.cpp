@@ -15,6 +15,14 @@
 #include <immintrin.h>
 
 
+#include <atomic>
+#include <unordered_map>
+#include <vector>
+#include <map>
+
+#include <string>
+#include <sstream>
+#include <iostream>
 
 /*MAC OSX Pthread barrier hack -- 
 http://blog.albertarmea.com/post/47089939939/using-pthread-barrier-on-mac-os-x
@@ -36,6 +44,8 @@ typedef struct
     int tripCount;
 } pthread_barrier_t;
 
+// **********************************************************************************************************************************
+void printBits(uint32_t num);
  
 int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
 {
@@ -124,13 +134,24 @@ pthread_key_t dkey;
 
 
 
-#define IFRIT_HASH_TABLE
-#ifdef IFRIT_HASH_TABLE
-__thread GHashTable *myWriteIFRs;
-__thread GHashTable *myReadIFRs;
-#endif
 
+typedef struct _value
+{
+  void* PC;
+  unsigned long IFR_ID;
+  unsigned long pointer;
+}VALUE;
+
+#define IFRIT_MAP
+#ifdef IFRIT_MAP
+// __thread std::map<gpointer, VALUE>* myWriteIFRs = NULL;
+// __thread std::map<gpointer, VALUE>* myReadIFRs = NULL;
+thread_local std::unordered_map<unsigned long, VALUE> myWriteIFRs;
+thread_local std::unordered_map<unsigned long, VALUE> myReadIFRs;
+#endif
+int lastThreadID;
 __thread int threadID;
+__thread bool inBeginIFRS;
 __thread IFR *raceCheckIFR;
 
 // todo change name of the lock
@@ -141,7 +162,7 @@ pthread_t threadAvailability[MAX_THDS];
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
-  // #define VARG_MASK_BITS 5
+  #define VARG_MASK_BITS 5
   // #define VARG_MASK_BITS 9
 #endif
 
@@ -169,6 +190,18 @@ bool gSampleState;
 pthread_t samplingAlarmThread;
 #endif
 
+typedef struct _request
+{
+  unsigned long pointer;  // data pointer
+  unsigned long IFR_ID;
+  unsigned int T_Index;
+  void* PC;
+}REQUEST;
+
+std::vector<REQUEST*> requestsArray[MAX_THDS];
+
+pthread_mutex_t requestLock[MAX_THDS];
+
 // pthread_mutex_t allThreadsLock;
 // pthread_t allThreads[MAX_THDS];
 
@@ -193,6 +226,16 @@ void print_trace(){
   free (strings);
 }
 
+void printBits(uint32_t num, std::ostringstream& output)
+{
+   for(int bit=0;bit<(sizeof(uint32_t) * 8); bit++)
+   {
+   		output << (num & 0x01);	
+      num = num >> 1;
+   }
+   output << "\n";
+}
+
 void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_list *ap);
 
 typedef struct _threadInitData {
@@ -205,38 +248,41 @@ void *threadStartFunc(void *data){
    *  forcing thd_dtr() to run when the thread terminates.  */
   pthread_setspecific(dkey,(void*)0x1);
 
-
-#ifdef IFRIT_HASH_TABLE
-  myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
-  myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
+#ifdef IFRIT_MAP
+  // myWriteIFRs = new std::map<gpointer, VALUE>();
+  // myReadIFRs = new std::map<gpointer, VALUE>();
+  myWriteIFRs.clear();
+  myReadIFRs.clear();
 #endif
+
   pthread_mutex_lock(&availabilityLock);
-  for (int i = 0; i < MAX_THDS; ++i)   
-  {
-    if( threadAvailability[i] == (pthread_t)0 ){
-      threadID = i;
-      threadAvailability[i] = pthread_self();
-      break;
-    }
+  if (threadAvailability[(lastThreadID+1)%MAX_THDS] == (pthread_t)0) {
+    threadID = (lastThreadID+1)%MAX_THDS;
+    threadAvailability[(lastThreadID+1)%MAX_THDS] = pthread_self();
+  	lastThreadID = (lastThreadID+1)%MAX_THDS;
+  } else {
+	  for (int i = 0; i < MAX_THDS; ++i)   
+	  {
+	    if( threadAvailability[i] == (pthread_t)0 ){
+	      threadID = i;
+	      threadAvailability[i] = pthread_self();
+		  	lastThreadID = i;
+	      break;
+	    }
+	  }
   }
+
+
+// fprintf(stderr, "threadID %d created\n", threadID);
+
   #ifdef SINGLE_THREADED_OPT
     num_threads++;
   #endif
   pthread_mutex_unlock(&availabilityLock);
 
 
-  // pthread_mutex_lock(&allThreadsLock);
-  // int i = 0;
-  // for(i = 0; i < MAX_THDS; i++){
-  //   if( allThreads[i] == (pthread_t)0 ){
-  //     allThreads[i] = pthread_self();
-  //     break;
-  //   }
-  // }
-
-
-  // pthread_mutex_unlock(&allThreadsLock);
-
+  requestsArray[threadID].clear();
+  inBeginIFRS = false;
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
 
@@ -260,7 +306,7 @@ void *sample(void *v) {
     SRATE = atoi( csrate );
     SOFF = atoi( csoff );
     fprintf(stderr, "[IFRit] Sampling enabled with SRATE=%u, SOFF=%u (rate=%f)\n",
-	    SRATE, SOFF, (float)SRATE / ((float)(SOFF + SRATE)));
+      SRATE, SOFF, (float)SRATE / ((float)(SOFF + SRATE)));
   } else {
     gSampleState = true;
     fprintf(stderr, "[IFRit] Sampling disabled\n");
@@ -280,10 +326,14 @@ void *sample(void *v) {
 #endif
 
 void thd_dtr(void*d){
+// fprintf(stderr, "threadID %d destroyed\n", threadID);
   /*Destructor*/
+  // if ((myWriteIFRs.size() + myReadIFRs.size()) != 0)
+	  // fprintf(stderr, "***** tid(%d) in destr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+	// else
+	  // fprintf(stderr, "***** tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
-    // if ((g_hash_table_size(myWriteIFRs) + g_hash_table_size(myReadIFRs)) != 0)
-      // fprintf(stderr, "**** tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, g_hash_table_size(myReadIFRs), g_hash_table_size(myWriteIFRs));
+
   IFRit_end_ifrs_internal(0, 0, NULL);
 
   pthread_mutex_lock(&availabilityLock);
@@ -307,19 +357,18 @@ void thd_dtr(void*d){
   //fprintf(stderr, "[IFRit] total: %lu redundant: %lu stack: %lu\n", totalStarts, alreadyActive, stackAddress);
   //fprintf(stderr, "[IFRit] Rough insertion weight (thread %p): %lu\n", pthread_self(), insertionCount);
 
-
-
-#ifdef IFRIT_HASH_TABLE
-  if( myWriteIFRs != NULL ){
-    g_hash_table_destroy(myWriteIFRs);
-  }
-  if( myReadIFRs != NULL ){
-    g_hash_table_destroy(myReadIFRs);
-  }
-#endif
-
-
+// #ifdef IFRIT_MAP
+//   if( myWriteIFRs != NULL ){
+//     delete myWriteIFRs;
+//     myWriteIFRs = NULL;
+//   }
+//   if( myReadIFRs != NULL ){
+//     delete myReadIFRs;
+//     myReadIFRs = NULL;
+//   }
+// #endif
   delete_ifr(raceCheckIFR);
+	  // fprintf(stderr, "***** tid(%d) destroyed\n\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
 }
 
@@ -338,10 +387,82 @@ void sigseg(int sig) {
   exit(0);
 }
 
-/*extern "C" */void __attribute__((constructor)) IFR_Init(void){
-  signal(SIGINT, sigint);
-  signal(SIGKILL, sigint);
-  signal(SIGSEGV, sigseg);
+__attribute__(( always_inline )) std::string dataraceHandler(int sig) {
+    // fprintf(stderr, "****tid(%d) in dataraceHandler requestsArray.size(%d)\n", threadID, requestsArray[threadID].size());
+  #ifndef IFRIT_HTM
+	  pthread_mutex_lock(&requestLock[threadID]);
+	#endif
+  // if(requestsArray[threadID].size()>0) {
+  //   // fprintf(stderr, "%lu %lu items in HT\n",g_hash_table_size(myWriteIFRs), g_hash_table_size(myReadIFRs) );
+  // }
+
+	std::ostringstream output;
+  for(std::vector<REQUEST*>::iterator it = requestsArray[threadID].begin(); it != requestsArray[threadID].end(); )
+  {
+    REQUEST* req = *it;
+    // fprintf(stderr, "####tid(%d) got req for %p from tid(%d) requestsArray.size(%d)\n", threadID,  (void*)(req->pointer), req->T_Index, requestsArray[threadID].size());
+
+    #ifdef IFRIT_MAP
+	    std::unordered_map<unsigned long,VALUE>::iterator ite = myWriteIFRs.find(req->pointer);
+	    if (ite != myWriteIFRs.end()) {
+
+	      VALUE value = ite->second;
+	      output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+	      // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
+	    	
+	    } else {
+	      ite = myReadIFRs.find(req->pointer);
+	      if (ite != myReadIFRs.end()) {
+
+		      VALUE value = ite->second;
+		      output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+		      // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
+
+	      } else {
+	      	output << "****not found in dataraceHandler\n";
+	     //  	output << "****tid("<< threadID <<") " << (void*)req->pointer << " not found in dataraceHandler\n";
+				  // unsigned char buf_fetch[17];
+				  // _mash_get((unsigned long)req->pointer, (unsigned long)req->pointer, buf_fetch);
+				  // uint32_t writeBound = *((uint32_t*)buf_fetch);
+				  // uint32_t readBound = *((uint32_t*)(buf_fetch+4));
+
+	     //  	printBits(writeBound, output);
+	     //  	printBits(readBound, output);
+	        // fprintf(stderr, "****not found in dataraceHandler\n");
+	      }
+	    }
+    #endif
+    
+	    // todo for debuging
+      // fprintf(stderr, "****myWriteIFRs.size(%d), myReadIFRs.size(%d)\n", myWriteIFRs.size(), myReadIFRs.size());
+	    // for (auto i = myWriteIFRs.begin(); i != myWriteIFRs.end(); ++i)
+	    // {
+     //    fprintf(stderr, "****myWriteIFRs %p --> %p\n", (void*)(req->pointer), (void*)i->second.pointer);
+	    // 	if (i-> second.pointer == req->pointer)
+	    //     fprintf(stderr, "****FOUND in dataraceHandler\n");
+	    // }
+	    // for (auto i = myReadIFRs.begin(); i != myReadIFRs.end(); ++i)
+	    // {
+     //    fprintf(stderr, "****myReadIFRs %p --> %p\n", (void*)(req->pointer), (void*)i->second.pointer);
+	    // 	if (i-> second.pointer == req->pointer)
+	    //     fprintf(stderr, "****FOUND in dataraceHandler\n");
+	    	
+	    // }
+    free(req);
+    it = requestsArray[threadID].erase(it);
+  }
+  #ifndef IFRIT_HTM
+	  pthread_mutex_unlock(&requestLock[threadID]);
+	#endif
+  // fprintf(stderr, "****tid(%d) exiting dataraceHandler requestsArray.size(%d)\n", threadID, requestsArray[threadID].size());
+	return output.str();
+}
+
+void __attribute__((constructor)) IFR_Init(void){
+  // signal(SIGINT, sigint);
+  // signal(SIGKILL, sigint);
+  // signal(SIGSEGV, sigseg);
+  // signal(SIGUSR1, dataraceHandlerrrr);
   // _mash_dummy();
   // mpxrt_prepare();
   fprintf(stderr, "[IFRit] Initializing IFR Runtime\n");
@@ -349,8 +470,8 @@ void sigseg(int sig) {
 
 
 
-#ifdef IFRIT_HASH_TABLE
-  fprintf(stderr, "[IFRit] MPX-based implementation in use.\n");
+#ifdef IFRIT_MAP
+  fprintf(stderr, "[IFRit] MPX+MAP-based implementation in use.\n");
 #endif
 
 #ifdef SINGLE_THREADED_OPT
@@ -395,19 +516,22 @@ void sigseg(int sig) {
 
   pthread_key_create(&dkey,thd_dtr);
 
-#ifdef IFRIT_HASH_TABLE
-  myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
-  myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
+#ifdef IFRIT_MAP
+  // myWriteIFRs = new std::map<gpointer, VALUE>();
+  // myReadIFRs = new std::map<gpointer, VALUE>();
+  myWriteIFRs.clear();
+  myReadIFRs.clear();
 #endif
 
   pthread_mutex_init(&availabilityLock,NULL);
-
-
   for (int i = 0; i < MAX_THDS; ++i) {
     threadAvailability[i] = (pthread_t)0;
+    pthread_mutex_init(&requestLock[i], NULL);
   }
   threadAvailability[0] = pthread_self();
   threadID = 0;
+  lastThreadID = 0;
+	inBeginIFRS = false;
 
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
@@ -439,30 +563,14 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 #endif
 
 
-// #ifdef IFRIT_HASH_TABLE
-// void add_ifrs_to_local_state(int num_new_ifrs, unsigned long *new_ifrs) {
-//   int v;
-//   for (v = 0; v < num_new_ifrs; v++) {
-//     gpointer varg = (gpointer) new_ifrs[v];
-//     assert(varg != NULL);
-//     /*todo check this assert*/
-//     assert(g_hash_table_lookup(myReadIFRs, varg) == NULL);
-//     assert(g_hash_table_lookup(myWriteIFRs, varg) != NULL);
-//     g_hash_table_insert(myReadIFRs, varg, g_hash_table_lookup(myWriteIFRs, varg));
-//     assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
-//   }
-// }
-// #endif
-
-
-
 
 // **********************************************************************************************************************************
 /*extern "C" */void IFRit_begin_ifrs(unsigned long id,
-				     unsigned long num_reads,
-				     unsigned long num_writes, ... ){
+             unsigned long num_reads,
+             unsigned long num_writes, ... ){
 
   // fprintf(stderr,"[IFRit] IFRit_begin_ifrs(ID=%lu, num_reads=%lu, num_writes=%lu) : PC: %p \n", id, num_reads, num_writes,  __builtin_return_address(0));
+
 
   // CHECK_SAMPLE_STATE;
   #ifdef SAMPLING
@@ -486,11 +594,9 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
   unsigned long all_wvargs[num_writes];
   int numNewReads = 0;
   int numNewWrites = 0;
-#endif
-#ifdef CHECK_FOR_RACES
 
   va_start(ap, num_writes);
-
+  // inBeginIFRS = true;
   for (i = 0; i < num_reads; i++) {
     unsigned long varg = va_arg(ap, unsigned long);
     assert(varg);
@@ -504,7 +610,7 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
     IFRit_begin_one_write_ifr(id, varg);
   }
 
-
+  // inBeginIFRS = false;
 #endif
 }
 
@@ -512,7 +618,7 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 
 // **********************************************************************************************************************************
 __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
-	(unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+  (unsigned long varg, uint32_t& _writeActive, unsigned long id, void* curProgPC) {
 
   unsigned char buf_fetch[17];  
   
@@ -524,60 +630,61 @@ __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
   uint32_t writeBound = *((uint32_t*)buf_fetch);   
   uint32_t writeActive = writeBound&mask; 
-
+  _writeActive = writeActive;
   /* Get READ IFR active in MPX table*/ 
   uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
   /*Add READ IFR to MPX table*/ 
   readBound = readBound|currThreadBitPosition;  
-  *((uint32_t*) (buf_fetch+4)) = readBound; 
+  *((uint32_t*) (buf_fetch+4)) = readBound;
 
-  /*If no datarace then save current ID and PC*/
-  if (writeActive == 0) {
-	// uint32_t id = (uint32_t)_id;
- //    *((uint32_t*) (buf_fetch+8)) = id; 
- //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
-    *((uint64_t*) (buf_fetch+8)) = storeval; 
+  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);
 
- //    printf("ID: ");
- //    for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", id & 0x01);
-	//   id = id >> 1;
-	// }
-	// printf("\n");
-	// printf("PC: ");
-	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", curProgPC & 0x01);
-	//   curProgPC = curProgPC >> 1;
-	// }
-	// printf("\n");
-	// printf("CM: ");
-	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", storeval & 0x01);
-	//   storeval = storeval >> 1;
-	// }
-	// printf("\n\n");
+    /* datarace */
+  if (writeActive != 0)
+  {
+    // printBits(writeActive);
+    for(unsigned int otherTID=0;otherTID<32; otherTID++)
+    {
+      if (writeActive & 0x01)
+      {
+        REQUEST *req = (REQUEST*)malloc(sizeof(REQUEST));
+        req->pointer = varg;
+        req->T_Index = threadID;
+        req->IFR_ID = id;
+        req->PC = curProgPC;
 
-  } else {
-    /*else return the ID and PC of other IFR*/
-    otherPC = *((uint32_t*) (buf_fetch+8));
-    otherID = *((uint32_t*) (buf_fetch+8+4));
+        // pthread_mutex_lock(&requestLock[otherTID]);
+        requestsArray[otherTID].push_back(req);
+        // pthread_mutex_unlock(&requestLock[otherTID]);
+
+        // fprintf(stderr, "****sending signal R-WA from tid(%d) to tid(%d) for %p\n", threadID, otherTID,  (void*)varg);
+        // if (pthread_kill(threadAvailability[otherTID], SIGUSR1) != 0) {
+        //   fprintf(stderr,"***[IFRit] error cant send signal other thread probably ended\n");
+        // }
+      }
+      writeActive = writeActive >> 1;
+    }
   }
+}
 
-  _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch);  
+void printBits(uint32_t num)
+{
+   for(int bit=0;bit<(sizeof(uint32_t) * 8); bit++)
+   {
+      fprintf(stderr, "%i ", num & 0x01);
+      num = num >> 1;
+   }
+   fprintf(stderr, "\n");
 }
 
 
-/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
+
+__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
                unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
+
     // CHECK_SAMPLE_STATE;
   #ifdef SAMPLING
     if (!gSampleState) {
@@ -592,15 +699,14 @@ __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
 #endif
 assert(varg);
 
+  #ifdef IFRIT_MAP
+    std::unordered_map<unsigned long,VALUE>::iterator it = myReadIFRs.find(varg);
+    if (it != myReadIFRs.end()) {
+      return;
+    }
+  #endif
 
-  /*Return if read IFR for current thread exists*/ 
-  if (g_hash_table_lookup(myReadIFRs, (gconstpointer) varg))
-  {
-    return;
-  }
-
-  uint32_t otherPC = 0;
-  uint32_t otherID = 0;
+  uint32_t writeActive = 0;
 
   void *curProgPC = __builtin_return_address(0);  
 
@@ -608,51 +714,32 @@ assert(varg);
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
-      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
       _xend ();
     } else {
       pthread_mutex_lock(&availabilityLock);
-      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
       pthread_mutex_unlock(&availabilityLock);
     }
   #else 
       LOCK_GLOBAL_INFO(varg);
-      IFRit_begin_one_read_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
       UNLOCK_GLOBAL_INFO(varg);
   #endif
-  
-  /* Add IFR to thread local READ IFR hashtable */
-    // fprintf(stderr,"NOT Active in local read %p %p ***\n", myReadIFRs, (gpointer)varg);
-    // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == NULL);
 
+  #ifdef IFRIT_MAP
+    VALUE val;
+    val.IFR_ID = id;
+    val.pointer = varg;
+    val.PC = curProgPC;
+    myReadIFRs[varg] = val;
+  #endif
 
-  uint64_t value = (uint64_t)(((uint64_t)id) << 32) | (uint64_t)curProgPC; 
-  g_hash_table_insert(myReadIFRs, (gpointer)varg, (gpointer)value);  // same key,val = data ptr
-    
-
-    // assert(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg) == (gconstpointer) varg);
-    // fprintf(stderr,"stored in local read ***\n");
-
-  /* datarace */  
-  if (otherPC || otherID) {
-// fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
-    fprintf(stderr,"***[IFRit] [RW] IFR ID: %lu %" PRIu32 " PC: %p %p\n", id, otherID, curProgPC, otherPC);
-    // print_trace();  
-  }
 }
-// **********************************************************************************************************************************
-void printBits(uint64_t num)
-{
-   for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-   {
-      printf("%i ", num & 0x01);
-      num = num >> 1;
-   }
-   printf("\n");
-}
+
 // **********************************************************************************************************************************
 __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
-	unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+  unsigned long varg, uint32_t& _readActive, uint32_t& _writeActive, unsigned long id, void* curProgPC) {
 
 
   unsigned char buf_fetch[17];  
@@ -664,87 +751,98 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
   uint32_t writeBound = *((uint32_t*)buf_fetch);
   uint32_t writeActive = writeBound&mask; 
-
-  // printf("Original Write: ");
-  // printBits(writeBound);
-  // printf("writeActive:    ");
-  // printBits(writeActive);
+  _writeActive = writeActive;
 
   /* Check if any other read IFR is active in the MPX table*/
   uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
-  // printf("Original Read:  ");
-  // printBits(readBound);
 
   uint32_t readActive = readBound&mask;
-  uint32_t ret = 0;
+  _readActive = readActive;
 
-  if (writeActive == 0 && readActive == 0) {
-
-    /*If no datarace then save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
- //    *((uint32_t*) (buf_fetch+8)) = id; 
- //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
-    *((uint64_t*) (buf_fetch+8)) = storeval; 
-
-  } else if (writeActive == 0) {
-
-    /*else save the ID and PC of other read IFR*/
-    otherPC = *((uint32_t*) (buf_fetch+8));
-    otherID = *((uint32_t*) (buf_fetch+8+4));
-
-    /*save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
-    // *((uint32_t*) (buf_fetch+8)) = (uint32_t)id; 
-    // *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
-    *((uint64_t*) (buf_fetch+8)) = storeval; 
-
-  } else if (readActive == 0) {
-
-    /*else return the ID and PC of other write IFR*/
-    otherPC = *((uint32_t*) (buf_fetch+8));
-    otherID = *((uint32_t*) (buf_fetch+8+4));
-
-    /*save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
- //    *((uint32_t*) (buf_fetch+8)) = id; 
- //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
-    *((uint64_t*) (buf_fetch+8)) = storeval; 
-  }
 
   /*Add WRITE IFR to MPX table*/
-  writeBound = writeBound|currThreadBitPosition;
+  if (writeActive) {
+	  // fprintf(stderr, "Orig writeBound for %p\n", (void*) varg);
+	  // printBits(writeBound);
+	  // fprintf(stderr, "Orig readBound\n");
+	  // printBits(readBound);
+	  writeBound = writeBound|currThreadBitPosition;
+	  // todo remove
+	  // assert((void*)(*((uint64_t*) (buf_fetch+8))) == (void*)varg || (void*)(*((uint64_t*) (buf_fetch+8))) == 0);
+	  // fprintf(stderr, "After writeBound\n");
+	  // printBits(writeBound);
+  } else {
+	  writeBound = writeBound|currThreadBitPosition;
+
+  }
   // printf("New Write:      ");
   // printBits(writeBound);
 
+  // todo debug remove
+  // if(!(void*)(*((uint64_t*) (buf_fetch+8)))) {
+  // 	if(writeActive)
+	 //  	printBits(writeActive);
+  // }
+  // if((void*)(*((uint64_t*) (buf_fetch+8))))
+  //   fprintf(stderr, "%p->%p\n",(void*)(*((uint64_t*) (buf_fetch+8))), (void*)varg);
+  // assert(varg);
+    
+
+
   *((uint32_t*) buf_fetch) = writeBound;
+  // todo debug remove
+  // *((uint64_t*) (buf_fetch+8)) = (uint64_t)varg;
   _mash_store((unsigned long)varg, (unsigned long)varg, buf_fetch); 
 
-  /*todo:*/
-  // if (writeActive != 0) 
-  //   return writeActive;
-  //   // return 1;
-  // if (readActive != 0) 
-  //   return readActive;
-  //   // return 2;
-  // return ret;
+
+  /* datarace */
+  if (writeActive != 0) {
+    for(unsigned int otherTID=0;otherTID<32; otherTID++)
+    {
+      if (writeActive & 0x01)
+      {
+        REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
+        req->pointer = varg;
+        req->T_Index = threadID;
+        req->IFR_ID = id;
+        req->PC = curProgPC;
+        
+        // pthread_mutex_lock(&requestLock[otherTID]);
+        requestsArray[otherTID].push_back(req);
+        // pthread_mutex_unlock(&requestLock[otherTID]);
+
+      }
+      writeActive = writeActive >> 1;
+    }
+  }
+
+  if (readActive != 0) {
+    for(unsigned int otherTID=0;otherTID<32; otherTID++)
+    {
+      if (readActive & 0x01)
+      {
+        REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
+        req->pointer = varg;
+        req->T_Index = threadID;
+        req->IFR_ID = id;
+        req->PC = curProgPC;
+
+        // pthread_mutex_lock(&requestLock[otherTID]);
+        requestsArray[otherTID].push_back(req);
+        // pthread_mutex_unlock(&requestLock[otherTID]);
+      }
+      readActive = readActive >> 1;
+    }
+  }
+
 }
 
     // fprintf(stderr,"***[IFRit] [WR] %lu ", writeBound); \
     // fprintf(stderr,"%lu ***\n", writeBound); \
     // fprintf(stderr,"stored in mpx***\n", writeBound); \
 
-/*extern "C" */__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
+__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
                 unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -763,14 +861,14 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   assert(varg);
 
   /*Return if write IFR for current thread exists*/ 
-  if (g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg))
-  {
-    // fprintf(stderr,"alreadyActive in local ***\n");
-    return;
-  }
-  
-  uint32_t otherPC = 0;
-  uint32_t otherID = 0;
+  #ifdef IFRIT_MAP
+    std::unordered_map<unsigned long,VALUE>::iterator it = myWriteIFRs.find(varg);
+    if (it != myWriteIFRs.end()) {
+      return;
+    }
+  #endif
+  uint32_t readActive = 0;
+  uint32_t writeActive = 0;
   
   void *curProgPC = __builtin_return_address(0);  
 
@@ -778,48 +876,29 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
-      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
       _xend ();
     } else {
       pthread_mutex_lock(&availabilityLock);
-      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
       pthread_mutex_unlock(&availabilityLock);
     }
   #else 
       LOCK_GLOBAL_INFO(varg);
-      IFRit_begin_one_write_ifr_CS(varg, id, (uint64_t)curProgPC, otherID, otherPC);
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
       UNLOCK_GLOBAL_INFO(varg);
   #endif
 
-  
-
-  // todo
-  // if (race == 1) {
-  //   void *curProgPC = __builtin_return_address(0);  
-  //   fprintf(stderr,"***[IFRit] [WW] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg); 
-  // }
-  // if (race == 2) {
-  //   void *curProgPC = __builtin_return_address(0);  
-  //   fprintf(stderr,"***[IFRit] [WR] IFR ID: %lu  PC: %p threadID(%d): %08x Data: %p \n", id, curProgPC, threadID, pthread_self(), (void*)varg);
-  // }
-  if (otherPC || otherID)   {
-//fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %" PRIu32 " PC: %p %p threadID(%d): %08x Data: %p \n", id, otherID, curProgPC, otherPC, threadID, pthread_self(), (void*)varg);
-    fprintf(stderr,"***[IFRit] [WX] IFR ID: %lu %" PRIu32 " PC: %p %p\n", id, otherID, curProgPC, otherPC);
-  }
-
-  /*print_trace();*/ 
 
   /* Add IFR to thread local WRITE IFR hashtable */
-
-    // fprintf(stderr,"NOT Active in local write%p %p ***\n", myWriteIFRs, (gpointer)varg);
-    // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == NULL);
-
-  uint64_t value = (uint64_t)(((uint64_t)id) << 32) | (uint64_t)curProgPC; 
-  g_hash_table_insert(myWriteIFRs, (gpointer)varg, (gpointer)value);    // same key,val = data ptr
-  
-    // assert(g_hash_table_lookup(myWriteIFRs, (gconstpointer) varg) == (gconstpointer) varg);
-    // fprintf(stderr,"stored in local write***\n");
-
+  #ifdef IFRIT_MAP
+    VALUE val;
+    val.IFR_ID = id;
+    val.pointer = varg;
+    val.PC = curProgPC;
+    myWriteIFRs[varg] = val;
+    // myWriteIFRs.insert ( std::pair<gpointer,VALUE>((gpointer)varg, val));
+  #endif
 
 }
 // **********************************************************************************************************************************
@@ -834,7 +913,7 @@ struct EndIFRsInfo {
   unsigned long *downgradeVars;
 };
 
-__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, uint32_t id, uint32_t curProgPC) {
+__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg) {
 
   unsigned char buf_fetch[17];  
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
@@ -847,13 +926,6 @@ __attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, ui
   /* Get READ IFR active in MPX table*/
   uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
-  /*If I was the last stored IFR then set zero*/
-  uint32_t lastIFRID = *((uint32_t*) (buf_fetch+8));
-  uint32_t lastIFRPC = *((uint32_t*) (buf_fetch+8+4));
-  if (lastIFRID == id && lastIFRPC == curProgPC) {
-    *((uint64_t*) (buf_fetch+8)) = 0; 
-  }
-
   /*Remove READ IFR from MPX table*/
   readBound = readBound&mask;
   *((uint32_t*) (buf_fetch+4)) = readBound;
@@ -864,7 +936,7 @@ __attribute__(( always_inline )) void process_end_read_CS(unsigned long varg, ui
 
 /* Process an active read IFR for an end IFRs action. Returns true if
    the IFR should be deleted from local state. */
-gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
+gboolean process_end_read_map(unsigned long key, gpointer user_data) {
   unsigned long varg = (unsigned long) key;
   struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *) user_data;
 
@@ -893,31 +965,47 @@ gboolean process_end_read(gpointer key, gpointer value, gpointer user_data) {
     return FALSE;
   }
 
-  uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
-  uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
-
   #ifdef IFRIT_HTM
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
-      process_end_read_CS(varg, id, curProgPC32);
+      process_end_read_CS(varg);
       _xend ();
     } else {
       pthread_mutex_lock(&availabilityLock);
-      process_end_read_CS(varg, id, curProgPC32);
+      process_end_read_CS(varg);
       pthread_mutex_unlock(&availabilityLock);
     }
   #else 
       LOCK_GLOBAL_INFO(varg);
-      process_end_read_CS(varg, id, curProgPC32);
+      process_end_read_CS(varg);
       UNLOCK_GLOBAL_INFO(varg);
   #endif
-
 
   return TRUE;
 }
 
-__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, uint32_t id, uint32_t curProgPC, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
+void delete_read(unsigned long varg) {
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      process_end_read_CS(varg);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      process_end_read_CS(varg);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      process_end_read_CS(varg);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+}
+
+
+__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
 
   unsigned char buf_fetch[17]; 
 
@@ -930,16 +1018,19 @@ __attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, u
   uint32_t writeBound = *((uint32_t*)buf_fetch);
   
   /*delete write from MPX*/
+  // printBits(writeBound);
   writeBound = writeBound&mask;
+  // printBits(writeBound);
+  // fprintf(stderr, "tid(%d)\n", threadID);
   *((uint32_t*) buf_fetch) = writeBound;
 
-  /*If I was the last stored IFR then set zero*/
-  uint32_t lastIFRID = *((uint32_t*) (buf_fetch+8));
-  uint32_t lastIFRPC = *((uint32_t*) (buf_fetch+8+4));
+  // uint64_t t = *((uint64_t*) (buf_fetch+8));
+  // if(*((uint64_t*) (buf_fetch+8)) != (uint64_t)varg) {
+  //   fprintf(stderr, "=%p\t%p\n", t, varg);
+  // }
+  // assert(*((uint64_t*) (buf_fetch+8)) == (uint64_t)varg);
 
-  if (lastIFRID == id && lastIFRPC == curProgPC) {
-    *((uint64_t*) (buf_fetch+8)) = 0; 
-  }
+
 
   if (downgrade) {
     /* Get READ IFR active in MPX table*/
@@ -960,9 +1051,9 @@ __attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, u
 
 /* Process an active write IFR during end_ifrs. Returns true if the
    write should be deleted from the local state. */
-gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
+#ifdef IFRIT_MAP
+bool process_end_write_map(unsigned long key, VALUE value, struct EndIFRsInfo * endIFRsInfo) {
   unsigned long varg = (unsigned long) key;
-  struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *) user_data;
 
   // Check to see if this IFR continues through this release.
   bool keepMust = false;
@@ -981,61 +1072,114 @@ gboolean process_end_write(gpointer key, gpointer value, gpointer user_data) {
   // If not, check if should be downgraded to a read IFR.
   bool downgrade = false;
   for (q = 0; q < endIFRsInfo->numMay; q++) {
-    if (endIFRsInfo->mayArgs[q] == varg && !(g_hash_table_lookup(myReadIFRs, (gconstpointer) varg))) {
+
+    if (endIFRsInfo->mayArgs[q] == varg && (myReadIFRs.find(key) == myReadIFRs.end())) {
       downgrade = true;
       break;
     }
   }
 
-  uint32_t id = ((uint32_t) 0xffffffff) & (((uint64_t)value)>>32);
-  uint32_t curProgPC32 = ((uint32_t) 0xffffffff) & ((uint64_t)value);
-
   #ifdef IFRIT_HTM
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
-      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      process_end_write_CS(varg, endIFRsInfo, downgrade);
       _xend ();
     } else {
       pthread_mutex_lock(&availabilityLock);
-      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      process_end_write_CS(varg, endIFRsInfo, downgrade);
       pthread_mutex_unlock(&availabilityLock);
     }
-
   #else 
       LOCK_GLOBAL_INFO(varg);
-      process_end_write_CS(varg, id, curProgPC32, endIFRsInfo, downgrade);
+      process_end_write_CS(varg, endIFRsInfo, downgrade);
       UNLOCK_GLOBAL_INFO(varg);
   #endif
 
 
-    /*todo check this assert*/
   /*Downgrade*/
   if (downgrade) {
-    assert(g_hash_table_lookup(myReadIFRs, key) == NULL);
-    // assert(g_hash_table_lookup(myWriteIFRs, varg) != NULL);
-    g_hash_table_insert(myReadIFRs, key, value);
-    // assert(g_hash_table_lookup(myReadIFRs, varg) == varg);
+    myReadIFRs[key] = value;
   }
 
   return TRUE;
 }
+#endif
+void delete_write(unsigned long varg) {
+	#ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      process_end_write_CS(varg, NULL, false);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      process_end_write_CS(varg, NULL, false);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      process_end_write_CS(varg, NULL, false);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+}
 
 // **********************************************************************************************************************************
 void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_list *ap) {
-  if ((myWriteIFRs != NULL && myReadIFRs != NULL) && (g_hash_table_size(myWriteIFRs) + g_hash_table_size(myReadIFRs)) == 0) {
+// 
+#ifdef IFRIT_MAP
+  // if (myWriteIFRs == NULL || myReadIFRs == NULL) {
+    // return;
+  // }
+  if ((myWriteIFRs.size() + myReadIFRs.size()) == 0) {
     return;
   }
+#endif
+
+  std::string output;
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+			output = dataraceHandler(0);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+			output = dataraceHandler(0);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      // LOCK_GLOBAL_INFO(varg);
+			output = dataraceHandler(0);
+      // UNLOCK_GLOBAL_INFO(varg);
+  #endif
+      fprintf(stderr, "%s", output.c_str());
+  // if (numMay == 0 && numMust == 0 && ap == NULL)
+	  // fprintf(stderr, "1. tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+
+  // in case of thread destruction
+  // if (numMay == 0 && numMust == 0 && ap == NULL) {
+  // 	for(auto i=myWriteIFRs.cbegin(); i!=myWriteIFRs.cend();++i) {
+	    
+	 //    delete_write(i->first);
+	 //  }
+	 //  for(auto i=myReadIFRs.begin(); i!=myReadIFRs.end();) {    
+	 //    delete_read(i->first);
+	 //  }
+	 //  myReadIFRs.clear();
+	 //  myWriteIFRs.clear();
+	 //  return;
+  // }
 
   struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *)
     malloc(sizeof (struct EndIFRsInfo));
 
   endIFRsInfo->numMay = numMay;
   endIFRsInfo->mayArgs = (unsigned long *) calloc(numMay,
-						  sizeof(unsigned long));
+              sizeof(unsigned long));
   endIFRsInfo->numMust = numMust;
   endIFRsInfo->mustArgs = (unsigned long *) calloc(numMust,
-						   sizeof(unsigned long));
+               sizeof(unsigned long));
 
   unsigned int v;
   for (v = 0; v < numMay; v++) {
@@ -1058,14 +1202,31 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
         if it is in mayArgs and !READ_IFR_EXISTS(element)
           downgrade --> activate readIFR+MPX and delete in write IFR+MPX
     */
-  g_hash_table_foreach_remove(myWriteIFRs, process_end_write, endIFRsInfo);
 
 
+  #ifdef IFRIT_MAP
+  for(auto i=myWriteIFRs.cbegin(); i!=myWriteIFRs.cend();)
+  {
+    if (process_end_write_map(i->first, i->second, endIFRsInfo)) {
+      i = myWriteIFRs.erase(i);
+    } else {
+      ++i;
+    }
+  }
+
+  for(auto i=myReadIFRs.begin(); i!=myReadIFRs.end();)
+  {    
+    if (process_end_read_map((*i).first, (gpointer)endIFRsInfo)) {
+      i = myReadIFRs.erase(i);
+    } else {
+      ++i;
+    }
+  }
   /*Process_end_read*/
     /*dont delete if mayArg is in myReadIFRs*/
     /*dont delete if mustArg is in myReadIFRs*/
     /*else delete in both MPX + local*/
-  g_hash_table_foreach_remove(myReadIFRs, process_end_read, endIFRsInfo);
+  #endif
 
   /*add downgraded IFRs*/
   // add_ifrs_to_local_state(endIFRsInfo->numDowngrade, endIFRsInfo->downgradeVars);
@@ -1073,6 +1234,9 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
   free(endIFRsInfo->mayArgs);
   free(endIFRsInfo->mustArgs);
   free(endIFRsInfo);
+  // if (numMay == 0 && numMust == 0 && ap == NULL)
+  // fprintf(stderr, "2. tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+
 }
 // **********************************************************************************************************************************
 
