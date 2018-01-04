@@ -158,12 +158,12 @@ __thread IFR *raceCheckIFR;
 pthread_mutex_t availabilityLock;
 pthread_t threadAvailability[MAX_THDS];
 
-#define IFRIT_HTM
+// #define IFRIT_HTM
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
-  // #define VARG_MASK_BITS 5
-  #define VARG_MASK_BITS 9
+  #define VARG_MASK_BITS 5
+  // #define VARG_MASK_BITS 9
 #endif
 
 #ifdef VARG_MASK_BITS
@@ -407,7 +407,7 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
       if (ite != myWriteIFRs.end()) {
 
         VALUE value = ite->second;
-        output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+        output << "***[IFRit] IFR ID: " << req.IFR_ID << " " << value.IFR_ID << " PC: " << req.PC << " "  << value.PC << "\n";
         // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
         
       } else {
@@ -415,7 +415,7 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
         if (ite != myReadIFRs.end()) {
 
           VALUE value = ite->second;
-          output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+          output << "***[IFRit] IFR ID: " << req.IFR_ID << " " << value.IFR_ID << " PC: " << req.PC << " "  << value.PC << "\n";
           // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
 
         } else {
