@@ -142,7 +142,7 @@ pthread_t threadAvailability[MAX_THDS];
   // 32 locks, 512 locks
   // only one global lock if not defined
   // #define VARG_MASK_BITS 5
-  // #define VARG_MASK_BITS 9
+  #define VARG_MASK_BITS 9
 #endif
 
 #ifdef VARG_MASK_BITS
@@ -210,6 +210,8 @@ void *threadStartFunc(void *data){
   myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
   myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
 #endif
+  // fprintf(stderr, "************* is not null tid(%d)\n", threadID);
+
   pthread_mutex_lock(&availabilityLock);
   for (int i = 0; i < MAX_THDS; ++i)   
   {
@@ -260,7 +262,7 @@ void *sample(void *v) {
     SRATE = atoi( csrate );
     SOFF = atoi( csoff );
     fprintf(stderr, "[IFRit] Sampling enabled with SRATE=%u, SOFF=%u (rate=%f)\n",
-	    SRATE, SOFF, (float)SRATE / ((float)(SOFF + SRATE)));
+      SRATE, SOFF, (float)SRATE / ((float)(SOFF + SRATE)));
   } else {
     gSampleState = true;
     fprintf(stderr, "[IFRit] Sampling disabled\n");
@@ -341,7 +343,7 @@ void sigseg(int sig) {
 /*extern "C" */void __attribute__((constructor)) IFR_Init(void){
   signal(SIGINT, sigint);
   signal(SIGKILL, sigint);
-  signal(SIGSEGV, sigseg);
+  // signal(SIGSEGV, sigseg);
   // _mash_dummy();
   // mpxrt_prepare();
   fprintf(stderr, "[IFRit] Initializing IFR Runtime\n");
@@ -399,6 +401,7 @@ void sigseg(int sig) {
   myWriteIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
   myReadIFRs = g_hash_table_new(g_direct_hash, g_direct_equal);
 #endif
+  // fprintf(stderr, "************* is not null tid(%d)\n", threadID);
 
   pthread_mutex_init(&availabilityLock,NULL);
 
@@ -459,8 +462,8 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 
 // **********************************************************************************************************************************
 /*extern "C" */void IFRit_begin_ifrs(unsigned long id,
-				     unsigned long num_reads,
-				     unsigned long num_writes, ... ){
+             unsigned long num_reads,
+             unsigned long num_writes, ... ){
 
   // fprintf(stderr,"[IFRit] IFRit_begin_ifrs(ID=%lu, num_reads=%lu, num_writes=%lu) : PC: %p \n", id, num_reads, num_writes,  __builtin_return_address(0));
 
@@ -512,7 +515,7 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 
 // **********************************************************************************************************************************
 __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
-	(unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+  (unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
 
   unsigned char buf_fetch[17];  
   
@@ -534,35 +537,35 @@ __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
 
   /*If no datarace then save current ID and PC*/
   if (writeActive == 0) {
-	// uint32_t id = (uint32_t)_id;
+  // uint32_t id = (uint32_t)_id;
  //    *((uint32_t*) (buf_fetch+8)) = id; 
  //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
+    uint64_t storeval = _id;
+    storeval = storeval << 32;
+    storeval = storeval | curProgPC;
     *((uint64_t*) (buf_fetch+8)) = storeval; 
 
  //    printf("ID: ");
  //    for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", id & 0x01);
-	//   id = id >> 1;
-	// }
-	// printf("\n");
-	// printf("PC: ");
-	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", curProgPC & 0x01);
-	//   curProgPC = curProgPC >> 1;
-	// }
-	// printf("\n");
-	// printf("CM: ");
-	// for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
-	// {
-	//   printf("%i ", storeval & 0x01);
-	//   storeval = storeval >> 1;
-	// }
-	// printf("\n\n");
+  // {
+  //   printf("%i ", id & 0x01);
+  //   id = id >> 1;
+  // }
+  // printf("\n");
+  // printf("PC: ");
+  // for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
+  // {
+  //   printf("%i ", curProgPC & 0x01);
+  //   curProgPC = curProgPC >> 1;
+  // }
+  // printf("\n");
+  // printf("CM: ");
+  // for(int bit=0;bit<(sizeof(uint64_t) * 8); bit++)
+  // {
+  //   printf("%i ", storeval & 0x01);
+  //   storeval = storeval >> 1;
+  // }
+  // printf("\n\n");
 
   } else {
     /*else return the ID and PC of other IFR*/
@@ -652,7 +655,7 @@ void printBits(uint64_t num)
 }
 // **********************************************************************************************************************************
 __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
-	unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
+  unsigned long varg, unsigned long _id, uint64_t curProgPC, uint32_t& otherID, uint32_t& otherPC) {
 
 
   unsigned char buf_fetch[17];  
@@ -682,13 +685,13 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   if (writeActive == 0 && readActive == 0) {
 
     /*If no datarace then save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
+  // uint32_t id = _id & ((uint32_t)0xffffffff);
  //    *((uint32_t*) (buf_fetch+8)) = id; 
  //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
+    uint64_t storeval = _id;
+    storeval = storeval << 32;
+    storeval = storeval | curProgPC;
     *((uint64_t*) (buf_fetch+8)) = storeval; 
 
   } else if (writeActive == 0) {
@@ -698,12 +701,12 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     otherID = *((uint32_t*) (buf_fetch+8+4));
 
     /*save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
+  // uint32_t id = _id & ((uint32_t)0xffffffff);
     // *((uint32_t*) (buf_fetch+8)) = (uint32_t)id; 
     // *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
+    uint64_t storeval = _id;
+    storeval = storeval << 32;
+    storeval = storeval | curProgPC;
     *((uint64_t*) (buf_fetch+8)) = storeval; 
 
   } else if (readActive == 0) {
@@ -713,12 +716,12 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     otherID = *((uint32_t*) (buf_fetch+8+4));
 
     /*save current ID and PC*/
-	// uint32_t id = _id & ((uint32_t)0xffffffff);
+  // uint32_t id = _id & ((uint32_t)0xffffffff);
  //    *((uint32_t*) (buf_fetch+8)) = id; 
  //    *((uint32_t*) (buf_fetch+8+4)) = curProgPC; 
-  	uint64_t storeval = _id;
-  	storeval = storeval << 32;
-  	storeval = storeval | curProgPC;
+    uint64_t storeval = _id;
+    storeval = storeval << 32;
+    storeval = storeval | curProgPC;
     *((uint64_t*) (buf_fetch+8)) = storeval; 
   }
 
@@ -1032,10 +1035,10 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
 
   endIFRsInfo->numMay = numMay;
   endIFRsInfo->mayArgs = (unsigned long *) calloc(numMay,
-						  sizeof(unsigned long));
+              sizeof(unsigned long));
   endIFRsInfo->numMust = numMust;
   endIFRsInfo->mustArgs = (unsigned long *) calloc(numMust,
-						   sizeof(unsigned long));
+               sizeof(unsigned long));
 
   unsigned int v;
   for (v = 0; v < numMay; v++) {
@@ -1058,14 +1061,19 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
         if it is in mayArgs and !READ_IFR_EXISTS(element)
           downgrade --> activate readIFR+MPX and delete in write IFR+MPX
     */
-  g_hash_table_foreach_remove(myWriteIFRs, process_end_write, endIFRsInfo);
+  if (myReadIFRs == NULL || myWriteIFRs == NULL)
+    fprintf(stderr, "************* is null %d tid(%d)\n", numMay+numMust, threadID);
+  else {
+    g_hash_table_foreach_remove(myWriteIFRs, process_end_write, endIFRsInfo);
+    /*Process_end_read*/
+      /*dont delete if mayArg is in myReadIFRs*/
+      /*dont delete if mustArg is in myReadIFRs*/
+      /*else delete in both MPX + local*/
+    g_hash_table_foreach_remove(myReadIFRs, process_end_read, endIFRsInfo);
+    
+  }
 
 
-  /*Process_end_read*/
-    /*dont delete if mayArg is in myReadIFRs*/
-    /*dont delete if mustArg is in myReadIFRs*/
-    /*else delete in both MPX + local*/
-  g_hash_table_foreach_remove(myReadIFRs, process_end_read, endIFRsInfo);
 
   /*add downgraded IFRs*/
   // add_ifrs_to_local_state(endIFRsInfo->numDowngrade, endIFRsInfo->downgradeVars);

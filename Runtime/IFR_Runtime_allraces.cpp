@@ -158,12 +158,12 @@ __thread IFR *raceCheckIFR;
 pthread_mutex_t availabilityLock;
 pthread_t threadAvailability[MAX_THDS];
 
-#define IFRIT_HTM
+// #define IFRIT_HTM
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
-  #define VARG_MASK_BITS 5
-  // #define VARG_MASK_BITS 9
+  // #define VARG_MASK_BITS 5
+  #define VARG_MASK_BITS 9
 #endif
 
 #ifdef VARG_MASK_BITS
@@ -230,7 +230,7 @@ void printBits(uint32_t num, std::ostringstream& output)
 {
    for(int bit=0;bit<(sizeof(uint32_t) * 8); bit++)
    {
-   		output << (num & 0x01);	
+      output << (num & 0x01); 
       num = num >> 1;
    }
    output << "\n";
@@ -259,17 +259,17 @@ void *threadStartFunc(void *data){
   if (threadAvailability[(lastThreadID+1)%MAX_THDS] == (pthread_t)0) {
     threadID = (lastThreadID+1)%MAX_THDS;
     threadAvailability[(lastThreadID+1)%MAX_THDS] = pthread_self();
-  	lastThreadID = (lastThreadID+1)%MAX_THDS;
+    lastThreadID = (lastThreadID+1)%MAX_THDS;
   } else {
-	  for (int i = 0; i < MAX_THDS; ++i)   
-	  {
-	    if( threadAvailability[i] == (pthread_t)0 ){
-	      threadID = i;
-	      threadAvailability[i] = pthread_self();
-		  	lastThreadID = i;
-	      break;
-	    }
-	  }
+    for (int i = 0; i < MAX_THDS; ++i)   
+    {
+      if( threadAvailability[i] == (pthread_t)0 ){
+        threadID = i;
+        threadAvailability[i] = pthread_self();
+        lastThreadID = i;
+        break;
+      }
+    }
   }
 
 
@@ -329,9 +329,9 @@ void thd_dtr(void*d){
 // fprintf(stderr, "threadID %d destroyed\n", threadID);
   /*Destructor*/
   // if ((myWriteIFRs.size() + myReadIFRs.size()) != 0)
-	  // fprintf(stderr, "***** tid(%d) in destr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
-	// else
-	  // fprintf(stderr, "***** tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+    // fprintf(stderr, "***** tid(%d) in destr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+  // else
+    // fprintf(stderr, "***** tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
 
   IFRit_end_ifrs_internal(0, 0, NULL);
@@ -368,7 +368,7 @@ void thd_dtr(void*d){
 //   }
 // #endif
   delete_ifr(raceCheckIFR);
-	  // fprintf(stderr, "***** tid(%d) destroyed\n\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+    // fprintf(stderr, "***** tid(%d) destroyed\n\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
 }
 
@@ -390,72 +390,72 @@ void sigseg(int sig) {
 __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
     // fprintf(stderr, "****tid(%d) in dataraceHandler requestsArray.size(%d)\n", threadID, requestsArray[threadID].size());
   #ifndef IFRIT_HTM
-	  pthread_mutex_lock(&requestLock[threadID]);
-	#endif
+    pthread_mutex_lock(&requestLock[threadID]);
+  #endif
   // if(requestsArray[threadID].size()>0) {
   //   // fprintf(stderr, "%lu %lu items in HT\n",g_hash_table_size(myWriteIFRs), g_hash_table_size(myReadIFRs) );
   // }
 
-	std::ostringstream output;
+  std::ostringstream output;
   for(std::vector<REQUEST*>::iterator it = requestsArray[threadID].begin(); it != requestsArray[threadID].end(); )
   {
     REQUEST* req = *it;
     // fprintf(stderr, "####tid(%d) got req for %p from tid(%d) requestsArray.size(%d)\n", threadID,  (void*)(req->pointer), req->T_Index, requestsArray[threadID].size());
 
     #ifdef IFRIT_MAP
-	    std::unordered_map<unsigned long,VALUE>::iterator ite = myWriteIFRs.find(req->pointer);
-	    if (ite != myWriteIFRs.end()) {
+      std::unordered_map<unsigned long,VALUE>::iterator ite = myWriteIFRs.find(req->pointer);
+      if (ite != myWriteIFRs.end()) {
 
-	      VALUE value = ite->second;
-	      output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
-	      // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
-	    	
-	    } else {
-	      ite = myReadIFRs.find(req->pointer);
-	      if (ite != myReadIFRs.end()) {
+        VALUE value = ite->second;
+        output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+        // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
+        
+      } else {
+        ite = myReadIFRs.find(req->pointer);
+        if (ite != myReadIFRs.end()) {
 
-		      VALUE value = ite->second;
-		      output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
-		      // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
+          VALUE value = ite->second;
+          output << "***[IFRit] IFR ID: " << req->IFR_ID << " " << value.IFR_ID << " PC: " << req->PC << " "  << value.PC << "\n";
+          // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
 
-	      } else {
-	      	output << "****not found in dataraceHandler\n";
-	     //  	output << "****tid("<< threadID <<") " << (void*)req->pointer << " not found in dataraceHandler\n";
-				  // unsigned char buf_fetch[17];
-				  // _mash_get((unsigned long)req->pointer, (unsigned long)req->pointer, buf_fetch);
-				  // uint32_t writeBound = *((uint32_t*)buf_fetch);
-				  // uint32_t readBound = *((uint32_t*)(buf_fetch+4));
+        } else {
+          output << "****not found in dataraceHandler\n";
+       //   output << "****tid("<< threadID <<") " << (void*)req->pointer << " not found in dataraceHandler\n";
+          // unsigned char buf_fetch[17];
+          // _mash_get((unsigned long)req->pointer, (unsigned long)req->pointer, buf_fetch);
+          // uint32_t writeBound = *((uint32_t*)buf_fetch);
+          // uint32_t readBound = *((uint32_t*)(buf_fetch+4));
 
-	     //  	printBits(writeBound, output);
-	     //  	printBits(readBound, output);
-	        // fprintf(stderr, "****not found in dataraceHandler\n");
-	      }
-	    }
+       //   printBits(writeBound, output);
+       //   printBits(readBound, output);
+          // fprintf(stderr, "****not found in dataraceHandler\n");
+        }
+      }
     #endif
     
-	    // todo for debuging
+      // todo for debuging
       // fprintf(stderr, "****myWriteIFRs.size(%d), myReadIFRs.size(%d)\n", myWriteIFRs.size(), myReadIFRs.size());
-	    // for (auto i = myWriteIFRs.begin(); i != myWriteIFRs.end(); ++i)
-	    // {
+      // for (auto i = myWriteIFRs.begin(); i != myWriteIFRs.end(); ++i)
+      // {
      //    fprintf(stderr, "****myWriteIFRs %p --> %p\n", (void*)(req->pointer), (void*)i->second.pointer);
-	    // 	if (i-> second.pointer == req->pointer)
-	    //     fprintf(stderr, "****FOUND in dataraceHandler\n");
-	    // }
-	    // for (auto i = myReadIFRs.begin(); i != myReadIFRs.end(); ++i)
-	    // {
+      //  if (i-> second.pointer == req->pointer)
+      //     fprintf(stderr, "****FOUND in dataraceHandler\n");
+      // }
+      // for (auto i = myReadIFRs.begin(); i != myReadIFRs.end(); ++i)
+      // {
      //    fprintf(stderr, "****myReadIFRs %p --> %p\n", (void*)(req->pointer), (void*)i->second.pointer);
-	    // 	if (i-> second.pointer == req->pointer)
-	    //     fprintf(stderr, "****FOUND in dataraceHandler\n");
-	    	
-	    // }
+      //  if (i-> second.pointer == req->pointer)
+      //     fprintf(stderr, "****FOUND in dataraceHandler\n");
+        
+      // }
     free(req);
     it = requestsArray[threadID].erase(it);
   }
   #ifndef IFRIT_HTM
-	  pthread_mutex_unlock(&requestLock[threadID]);
-	#endif
+    pthread_mutex_unlock(&requestLock[threadID]);
+  #endif
   // fprintf(stderr, "****tid(%d) exiting dataraceHandler requestsArray.size(%d)\n", threadID, requestsArray[threadID].size());
-	return output.str();
+  return output.str();
 }
 
 void __attribute__((constructor)) IFR_Init(void){
@@ -531,7 +531,7 @@ void __attribute__((constructor)) IFR_Init(void){
   threadAvailability[0] = pthread_self();
   threadID = 0;
   lastThreadID = 0;
-	inBeginIFRS = false;
+  inBeginIFRS = false;
 
   raceCheckIFR = new_ifr(pthread_self(), 0, 0, 0);
 
@@ -763,17 +763,17 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
 
   /*Add WRITE IFR to MPX table*/
   if (writeActive) {
-	  // fprintf(stderr, "Orig writeBound for %p\n", (void*) varg);
-	  // printBits(writeBound);
-	  // fprintf(stderr, "Orig readBound\n");
-	  // printBits(readBound);
-	  writeBound = writeBound|currThreadBitPosition;
-	  // todo remove
-	  // assert((void*)(*((uint64_t*) (buf_fetch+8))) == (void*)varg || (void*)(*((uint64_t*) (buf_fetch+8))) == 0);
-	  // fprintf(stderr, "After writeBound\n");
-	  // printBits(writeBound);
+    // fprintf(stderr, "Orig writeBound for %p\n", (void*) varg);
+    // printBits(writeBound);
+    // fprintf(stderr, "Orig readBound\n");
+    // printBits(readBound);
+    writeBound = writeBound|currThreadBitPosition;
+    // todo remove
+    // assert((void*)(*((uint64_t*) (buf_fetch+8))) == (void*)varg || (void*)(*((uint64_t*) (buf_fetch+8))) == 0);
+    // fprintf(stderr, "After writeBound\n");
+    // printBits(writeBound);
   } else {
-	  writeBound = writeBound|currThreadBitPosition;
+    writeBound = writeBound|currThreadBitPosition;
 
   }
   // printf("New Write:      ");
@@ -781,8 +781,8 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
 
   // todo debug remove
   // if(!(void*)(*((uint64_t*) (buf_fetch+8)))) {
-  // 	if(writeActive)
-	 //  	printBits(writeActive);
+  //  if(writeActive)
+   //   printBits(writeActive);
   // }
   // if((void*)(*((uint64_t*) (buf_fetch+8))))
   //   fprintf(stderr, "%p->%p\n",(void*)(*((uint64_t*) (buf_fetch+8))), (void*)varg);
@@ -1106,7 +1106,7 @@ bool process_end_write_map(unsigned long key, VALUE value, struct EndIFRsInfo * 
 }
 #endif
 void delete_write(unsigned long varg) {
-	#ifdef IFRIT_HTM
+  #ifdef IFRIT_HTM
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
@@ -1141,34 +1141,34 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
     unsigned status = _XABORT_EXPLICIT;
     if ((status = _xbegin ()) == _XBEGIN_STARTED) 
     {
-			output = dataraceHandler(0);
+      output = dataraceHandler(0);
       _xend ();
     } else {
       pthread_mutex_lock(&availabilityLock);
-			output = dataraceHandler(0);
+      output = dataraceHandler(0);
       pthread_mutex_unlock(&availabilityLock);
     }
   #else 
       // LOCK_GLOBAL_INFO(varg);
-			output = dataraceHandler(0);
+      output = dataraceHandler(0);
       // UNLOCK_GLOBAL_INFO(varg);
   #endif
       fprintf(stderr, "%s", output.c_str());
   // if (numMay == 0 && numMust == 0 && ap == NULL)
-	  // fprintf(stderr, "1. tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
+    // fprintf(stderr, "1. tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
   // in case of thread destruction
   // if (numMay == 0 && numMust == 0 && ap == NULL) {
-  // 	for(auto i=myWriteIFRs.cbegin(); i!=myWriteIFRs.cend();++i) {
-	    
-	 //    delete_write(i->first);
-	 //  }
-	 //  for(auto i=myReadIFRs.begin(); i!=myReadIFRs.end();) {    
-	 //    delete_read(i->first);
-	 //  }
-	 //  myReadIFRs.clear();
-	 //  myWriteIFRs.clear();
-	 //  return;
+  //  for(auto i=myWriteIFRs.cbegin(); i!=myWriteIFRs.cend();++i) {
+      
+   //    delete_write(i->first);
+   //  }
+   //  for(auto i=myReadIFRs.begin(); i!=myReadIFRs.end();) {    
+   //    delete_read(i->first);
+   //  }
+   //  myReadIFRs.clear();
+   //  myWriteIFRs.clear();
+   //  return;
   // }
 
   struct EndIFRsInfo *endIFRsInfo = (struct EndIFRsInfo *)
