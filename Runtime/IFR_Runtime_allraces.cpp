@@ -167,8 +167,8 @@ pthread_t threadAvailability[MAX_THDS];
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
-  #define VARG_MASK_BITS 5
-  // #define VARG_MASK_BITS 9
+  // #define VARG_MASK_BITS 5
+  #define VARG_MASK_BITS 9
 #endif
 
 #ifdef VARG_MASK_BITS

@@ -150,14 +150,14 @@ typedef tbb::concurrent_hash_map<unsigned long, IFRMap *> IFRMapMap;
 IFRMapMap *ActiveMayWriteIFR;
 IFRMap *ActiveMustWriteIFR;
 #else
-#define IFRIT_HTM
+// #define IFRIT_HTM
   #ifdef IFRIT_HTM
     // only one global lock dont define 
     // #define VARG_MASK_BITS 0
   #else
     // 32 locks, 512 locks
-    #define VARG_MASK_BITS 5
-    // #define VARG_MASK_BITS 9
+    // #define VARG_MASK_BITS 5
+    #define VARG_MASK_BITS 9
   #endif
 
 

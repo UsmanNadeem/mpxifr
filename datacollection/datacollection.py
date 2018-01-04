@@ -21,7 +21,7 @@ import subprocess
 # run
 
 
-for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster"]:
+for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster", "bodytrack"]:
 	for inputSize in ["simsmall", "simlarge"]:
 		for numThreads in [4, 8]:
 			for numRaces in ["allraces", "one"]:
@@ -30,8 +30,8 @@ for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster"
 					count = 0  # total races reported
 					dataraces = []  # unique races
 					outFile = open(app+"-mpx-"+inputSize+"-"+str(numThreads)+"-"+numRaces+"-"+concurency+".temp.txt" ,'w') 
-					print "------------------------------------------------------------------------------------------------Running", app, inputSize, numThreads, numRaces, concurency
-					print "------------------------------------------------------------------------------------------------bin/parsecmgmt -a run -p "+app+" -c gcc-pthreads -n "+str(numThreads)+" -i "+inputSize
+					print "Running", app, inputSize, numThreads, numRaces, concurency
+					print "bin/parsecmgmt -a run -p "+app+" -c gcc-pthreads -n "+str(numThreads)+" -i "+inputSize, "\n\n"
 
 					for x in xrange(0, 5):
 
@@ -87,15 +87,15 @@ for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster"
 
 
 
-for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster"]:
+for app in ["blackscholes", "fluidanimate", "swaptions", "x264", "streamcluster", "bodytrack"]:
 	for inputSize in ["simsmall", "simlarge"]:
 		for numThreads in [4, 8]:
-			for concurency in ["1lock", "32lock", "512lock", "htm"]:
+			for concurency in ["1lock", "32lock", "512lock"]:
 				time = []
 				count = 0  # total races reported
 				dataraces = []  # unique races
 				outFile = open(app+"-hashtable-"+inputSize+"-"+str(numThreads)+"-"+concurency+".temp.txt" ,'w') 
-				print "------------------------------------------------------------------------------------------------Running", app, inputSize, numThreads, "hashtable", concurency
+				print "Running", app, inputSize, numThreads, "hashtable", concurency, "\n\n"
 
 				for x in xrange(0, 5):
 					output = subprocess.check_output("export LD_LIBRARY_PATH=~/IFRit/Runtime;\

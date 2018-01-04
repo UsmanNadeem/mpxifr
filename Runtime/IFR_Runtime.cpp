@@ -139,7 +139,7 @@ __thread IFR *raceCheckIFR;
 pthread_mutex_t availabilityLock;
 pthread_t threadAvailability[MAX_THDS];
 
-#define IFRIT_HTM
+// #define IFRIT_HTM
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
