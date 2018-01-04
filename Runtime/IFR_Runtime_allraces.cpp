@@ -158,7 +158,7 @@ __thread IFR *raceCheckIFR;
 pthread_mutex_t availabilityLock;
 pthread_t threadAvailability[MAX_THDS];
 
-// #define IFRIT_HTM
+#define IFRIT_HTM
 #ifndef IFRIT_HTM
   // 32 locks, 512 locks
   // only one global lock if not defined
@@ -198,7 +198,7 @@ typedef struct _request
   void* PC;
 }REQUEST;
 
-std::vector<REQUEST*> requestsArray[MAX_THDS];
+std::vector<REQUEST> requestsArray[MAX_THDS];
 
 pthread_mutex_t requestLock[MAX_THDS];
 
@@ -397,13 +397,13 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
   // }
 
   std::ostringstream output;
-  for(std::vector<REQUEST*>::iterator it = requestsArray[threadID].begin(); it != requestsArray[threadID].end(); )
+  for(std::vector<REQUEST>::iterator it = requestsArray[threadID].begin(); it != requestsArray[threadID].end(); )
   {
-    REQUEST* req = *it;
+    REQUEST req = *it;
     // fprintf(stderr, "####tid(%d) got req for %p from tid(%d) requestsArray.size(%d)\n", threadID,  (void*)(req->pointer), req->T_Index, requestsArray[threadID].size());
 
     #ifdef IFRIT_MAP
-      std::unordered_map<unsigned long,VALUE>::iterator ite = myWriteIFRs.find(req->pointer);
+      std::unordered_map<unsigned long,VALUE>::iterator ite = myWriteIFRs.find(req.pointer);
       if (ite != myWriteIFRs.end()) {
 
         VALUE value = ite->second;
@@ -411,7 +411,7 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
         // fprintf(stderr,"***[IFRit] IFR ID: %lu %" PRIu32 " PC: %p %p\n", req->IFR_ID, value.IFR_ID, req->PC, value.PC);
         
       } else {
-        ite = myReadIFRs.find(req->pointer);
+        ite = myReadIFRs.find(req.pointer);
         if (ite != myReadIFRs.end()) {
 
           VALUE value = ite->second;
@@ -448,7 +448,7 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
       //     fprintf(stderr, "****FOUND in dataraceHandler\n");
         
       // }
-    free(req);
+    // free(req);
     it = requestsArray[threadID].erase(it);
   }
   #ifndef IFRIT_HTM
@@ -461,7 +461,7 @@ __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
 void __attribute__((constructor)) IFR_Init(void){
   // signal(SIGINT, sigint);
   // signal(SIGKILL, sigint);
-  // signal(SIGSEGV, sigseg);
+  signal(SIGSEGV, sigseg);
   // signal(SIGUSR1, dataraceHandlerrrr);
   // _mash_dummy();
   // mpxrt_prepare();
@@ -648,11 +648,12 @@ __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
     {
       if (writeActive & 0x01)
       {
-        REQUEST *req = (REQUEST*)malloc(sizeof(REQUEST));
-        req->pointer = varg;
-        req->T_Index = threadID;
-        req->IFR_ID = id;
-        req->PC = curProgPC;
+        // REQUEST *req = (REQUEST*)malloc(sizeof(REQUEST));
+        REQUEST req;
+        req.pointer = varg;
+        req.T_Index = threadID;
+        req.IFR_ID = id;
+        req.PC = curProgPC;
 
         // pthread_mutex_lock(&requestLock[otherTID]);
         requestsArray[otherTID].push_back(req);
@@ -802,11 +803,12 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     {
       if (writeActive & 0x01)
       {
-        REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
-        req->pointer = varg;
-        req->T_Index = threadID;
-        req->IFR_ID = id;
-        req->PC = curProgPC;
+        // REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
+        REQUEST req;
+        req.pointer = varg;
+        req.T_Index = threadID;
+        req.IFR_ID = id;
+        req.PC = curProgPC;
         
         // pthread_mutex_lock(&requestLock[otherTID]);
         requestsArray[otherTID].push_back(req);
@@ -822,11 +824,12 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     {
       if (readActive & 0x01)
       {
-        REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
-        req->pointer = varg;
-        req->T_Index = threadID;
-        req->IFR_ID = id;
-        req->PC = curProgPC;
+        // REQUEST* req = (REQUEST*)malloc(sizeof(REQUEST));
+        REQUEST req;
+        req.pointer = varg;
+        req.T_Index = threadID;
+        req.IFR_ID = id;
+        req.PC = curProgPC;
 
         // pthread_mutex_lock(&requestLock[otherTID]);
         requestsArray[otherTID].push_back(req);
@@ -1154,6 +1157,12 @@ void IFRit_end_ifrs_internal(unsigned long numMay, unsigned long numMust, va_lis
       // UNLOCK_GLOBAL_INFO(varg);
   #endif
       fprintf(stderr, "%s", output.c_str());
+
+  if (ap == NULL && (numMust+numMay)> 0)
+  {
+    fprintf(stderr, "error va_list *ap is NULL\n");
+    exit(-1);
+  }
   // if (numMay == 0 && numMust == 0 && ap == NULL)
     // fprintf(stderr, "1. tid(%d) in dtr myReadIFRs(%d) myWriteIFRs(%d)\n", threadID, myReadIFRs.size(), myWriteIFRs.size());
 
