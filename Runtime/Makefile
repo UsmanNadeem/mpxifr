@@ -1,5 +1,5 @@
 #CC=gcc
-CC=clang++
+CC=g++
 GLIB_CFLAGS=-pthread `pkg-config --cflags glib-2.0`
 GLIB_LIBS=-lpthread  -lgthread-2.0 -lglib-2.0
 

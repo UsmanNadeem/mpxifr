@@ -150,7 +150,7 @@ typedef tbb::concurrent_hash_map<unsigned long, IFRMap *> IFRMapMap;
 IFRMapMap *ActiveMayWriteIFR;
 IFRMap *ActiveMustWriteIFR;
 #else
-// #define IFRIT_HTM
+#define IFRIT_HTM
   #ifdef IFRIT_HTM
     // only one global lock dont define 
     // #define VARG_MASK_BITS 0
@@ -406,9 +406,18 @@ void sigint(int sig) {
   exit(0);
 }
 
+void sigseg(int sig) {
+  fprintf(stderr, "[IFRit] Received signal SIGSEGV\n");
+  // pthread_cancel(samplingAlarmThread);
+  // pthread_join(samplingAlarmThread,NULL);
+  print_trace();
+  exit(0);
+}
+
 /*extern "C" */void __attribute__((constructor)) IFR_Init(void){
   signal(SIGINT, sigint);
   signal(SIGKILL, sigint);
+  signal(SIGSEGV, sigseg);
 
   dbprintf(stderr,"Initializing IFR Runtime\n");
 

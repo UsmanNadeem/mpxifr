@@ -35,6 +35,9 @@ http://blog.albertarmea.com/post/47089939939/using-pthread-barrier-on-mac-os-x
 #include <pthread.h>
 #include <errno.h>
 
+
+
+
 typedef int pthread_barrierattr_t;
 typedef struct
 {
@@ -99,6 +102,8 @@ int pthread_barrier_wait(pthread_barrier_t *barrier)
 #endif // __APPLE__
 
 
+inline __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_infile(unsigned long id, unsigned long varg);
+inline __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_infile(unsigned long id, unsigned long varg);
 
 
 #include "IFR.h"
@@ -387,7 +392,7 @@ void sigseg(int sig) {
   exit(0);
 }
 
-__attribute__(( always_inline )) std::string dataraceHandler(int sig) {
+inline __attribute__(( always_inline )) std::string dataraceHandler(int sig) {
     // fprintf(stderr, "****tid(%d) in dataraceHandler requestsArray.size(%d)\n", threadID, requestsArray[threadID].size());
   #ifndef IFRIT_HTM
     pthread_mutex_lock(&requestLock[threadID]);
@@ -600,14 +605,14 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
   for (i = 0; i < num_reads; i++) {
     unsigned long varg = va_arg(ap, unsigned long);
     assert(varg);
-    IFRit_begin_one_read_ifr(id, varg);
+    IFRit_begin_one_read_ifr_infile(id, varg);
   }
 
 
   for (i = 0; i < num_writes; i++) {
     unsigned long varg = va_arg(ap, unsigned long);
     assert(varg);
-    IFRit_begin_one_write_ifr(id, varg);
+    IFRit_begin_one_write_ifr_infile(id, varg);
   }
 
   // inBeginIFRS = false;
@@ -617,7 +622,7 @@ void IFR_raceCheck(gpointer key, gpointer value, gpointer data){
 // **********************************************************************************************************************************
 
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
+inline __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_CS
   (unsigned long varg, uint32_t& _writeActive, unsigned long id, void* curProgPC) {
 
   unsigned char buf_fetch[17];  
@@ -680,8 +685,63 @@ void printBits(uint32_t num)
 }
 
 
+void IFRit_begin_one_read_ifr(unsigned long id,
+               unsigned long varg) {
 
-__attribute__(( always_inline )) void IFRit_begin_one_read_ifr(unsigned long id,
+  // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
+
+    // CHECK_SAMPLE_STATE;
+  #ifdef SAMPLING
+    if (!gSampleState) {
+        return;
+    }
+  #endif;
+
+#ifdef SINGLE_THREADED_OPT
+  if (num_threads == 1) {
+    return;
+  }
+#endif
+assert(varg);
+
+  #ifdef IFRIT_MAP
+    std::unordered_map<unsigned long,VALUE>::iterator it = myReadIFRs.find(varg);
+    if (it != myReadIFRs.end()) {
+      return;
+    }
+  #endif
+
+  uint32_t writeActive = 0;
+
+  void *curProgPC = __builtin_return_address(0);  
+
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      IFRit_begin_one_read_ifr_CS(varg, writeActive, id, curProgPC);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
+  #ifdef IFRIT_MAP
+    VALUE val;
+    val.IFR_ID = id;
+    val.pointer = varg;
+    val.PC = curProgPC;
+    myReadIFRs[varg] = val;
+  #endif
+
+}
+inline __attribute__(( always_inline )) void IFRit_begin_one_read_ifr_infile(unsigned long id,
                unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_read_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -739,7 +799,7 @@ assert(varg);
 }
 
 // **********************************************************************************************************************************
-__attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
+inline __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
   unsigned long varg, uint32_t& _readActive, uint32_t& _writeActive, unsigned long id, void* curProgPC) {
 
 
@@ -845,7 +905,67 @@ __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_CS(
     // fprintf(stderr,"%lu ***\n", writeBound); \
     // fprintf(stderr,"stored in mpx***\n", writeBound); \
 
-__attribute__(( always_inline )) void IFRit_begin_one_write_ifr(unsigned long id, 
+void IFRit_begin_one_write_ifr(unsigned long id, 
+                unsigned long varg) {
+
+  // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
+    // CHECK_SAMPLE_STATE;
+  #ifdef SAMPLING
+    if (!gSampleState) {
+        return;
+    }
+  #endif;
+
+  #ifdef SINGLE_THREADED_OPT
+    if (num_threads == 1) {
+      return;
+    }
+  #endif
+  assert(varg);
+
+  /*Return if write IFR for current thread exists*/ 
+  #ifdef IFRIT_MAP
+    std::unordered_map<unsigned long,VALUE>::iterator it = myWriteIFRs.find(varg);
+    if (it != myWriteIFRs.end()) {
+      return;
+    }
+  #endif
+  uint32_t readActive = 0;
+  uint32_t writeActive = 0;
+  
+  void *curProgPC = __builtin_return_address(0);  
+
+  #ifdef IFRIT_HTM
+    unsigned status = _XABORT_EXPLICIT;
+    if ((status = _xbegin ()) == _XBEGIN_STARTED) 
+    {
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
+      _xend ();
+    } else {
+      pthread_mutex_lock(&availabilityLock);
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
+      pthread_mutex_unlock(&availabilityLock);
+    }
+  #else 
+      LOCK_GLOBAL_INFO(varg);
+      IFRit_begin_one_write_ifr_CS(varg, readActive, writeActive, id, curProgPC);
+      UNLOCK_GLOBAL_INFO(varg);
+  #endif
+
+
+  /* Add IFR to thread local WRITE IFR hashtable */
+  #ifdef IFRIT_MAP
+    VALUE val;
+    val.IFR_ID = id;
+    val.pointer = varg;
+    val.PC = curProgPC;
+    myWriteIFRs[varg] = val;
+    // myWriteIFRs.insert ( std::pair<gpointer,VALUE>((gpointer)varg, val));
+  #endif
+
+}
+
+inline __attribute__(( always_inline )) void IFRit_begin_one_write_ifr_infile(unsigned long id, 
                 unsigned long varg) {
 
   // fprintf(stderr,"[IFRit] IFRit_begin_one_write_ifr(ID=%lu, ptr=%p) : PC: %p \n", id, (void*)varg,  __builtin_return_address(0));
@@ -916,7 +1036,7 @@ struct EndIFRsInfo {
   unsigned long *downgradeVars;
 };
 
-__attribute__(( always_inline )) void process_end_read_CS(unsigned long varg) {
+inline __attribute__(( always_inline )) void process_end_read_CS(unsigned long varg) {
 
   unsigned char buf_fetch[17];  
   _mash_get((unsigned long)varg, (unsigned long)varg, buf_fetch);  
@@ -1008,7 +1128,7 @@ void delete_read(unsigned long varg) {
 }
 
 
-__attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
+inline __attribute__(( always_inline )) void process_end_write_CS(unsigned long varg, struct EndIFRsInfo* endIFRsInfo, bool downgrade) {
 
   unsigned char buf_fetch[17]; 
 
